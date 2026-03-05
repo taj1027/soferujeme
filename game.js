@@ -1,22 +1,17 @@
-// Start–Cíl: Autíčka (v2) — Phaser 3
-// ZMENY:
-// 1) Skutočný "world" väčší než obrazovka + kamera sleduje auto (mapa pokračuje za okraj).
-// 2) V menu je výber AUTA aj MAPY (Slovensko / Česko / Dánsko).
-// 3) Mapu vieš jednoducho upraviť cez GRID "ASCII mapu" nižšie (znaky '#', '.', 'S', 'F').
+// Start–Cíl: Autíčka (v3) — Phaser 3
+// ÚPRAVY PODĽA POŽIADAVKY:
+// 1) Odstránené "šipky" z mapy (žiadne overlay šípky v strede).
+// 2) Namiesto tlačidiel doľava/doprava je VOLANT (drag/ťahanie).
+// 3) Odstránené všetky malé "pomlčky" na ceste (dash segmenty).
 //
-// Ako upravovať mapu (najľahšie):
-// - MAPS.<krajina>.grid je pole stringov rovnakej dĺžky.
-// - '#' = jazditeľná plocha (zem / cesta)
-// - '.' = nepriechodné (voda / mimo mapy) => auto do toho nenarazí? (narazí do "wall")
-// - 'S' = štart (jedno miesto)
-// - 'F' = cieľ (jedno miesto)
-// Tip: stačí meniť tvary # tak, aby pripomínali hranice štátu.
-// Bonus: Stlač G počas hry => zapne/vypne sa GRID overlay (na ladenie tvaru).
+// OVLÁDANIE:
+// - Plyn: tlačidlo ⛽ alebo šípka hore (↑)
+// - Volant: ťahaj kruh vľavo dole (alebo šípky ← → na klávesnici)
+// - G: zapnúť/vypnúť mriežku (debug tvaru mapy)
 
 const VIEW_W = 390;
 const VIEW_H = 780;
 
-// Veľkosť jedného grid políčka v pixeloch (čím väčšie, tým menej "stien")
 const CELL = 44;
 
 // Autá
@@ -29,124 +24,87 @@ const CARS = [
 const RULES = {
   finishReward: 100,
   crashPenalty: 10,
-  redLightPenaltyPerSec: 12,
 };
 
-// --- GRID MAPY ---
-// Pozn.: Sú to zjednodušené obrysy. Uprav 'grid' (#) aby viac sedeli na hranice.
 const MAPS = {
-  sk: {
-    id: "sk",
-    name: "Slovensko",
-    // 24 x 24
-    grid: [
-      "................................................................................",
-      "................................................................................",
-      "...................................###..........................................",
-      "..........................###.....#####.........................................",
-      ".......................#######....######....................###................",
-      ".......................#####.....######................###########.............",
-      "......................######.....######..............###############...........",
-      ".....................###################............##################.........",
-      "...................######################..........####################........",
-      "..................#######################.........#####################........",
-      "..................########################......#######################........",
-      "..................######################################################.......",
-      ".................########################################################......",
-      "...............##########################################################......",
-      "..............###########################################################......",
-      "............############################################################.......",
-      "....####################################################################.......",
-      "....####################################################################.......",
-      "...#####################################################################.......",
-      "...####################################################################........",
-      "..####################################################################.........",
-      "..###########################################################..#######.........",
-      "..##########################################################....######.........",
-      ".##########################################################......#####.........",
-      ".#########################################################.......#####.........",
-      ".########################################################........#####.........",
-      ".#######################################################..........###..........",
-      "..#####################################################.........................",
-      "..#############################################.................................",
-      "...###########################################..................................",
-      "....########################################....................................",
-      ".....#####################################......................................",
-      ".......##################################.......................................",
-      ".........################################.......................................",
-      ".........################################.......................................",
-      "..........##############################.......................................",
-      "..............########################.........................................",
-      "................#####################..........................................",
-      "....................##############.............................................",
-      ".......................########................................................",
-      "..........................####.................................................",
-      "................................................................................",
-      "................................................................................"
-    ]
-  },
-  cz: {
-    id: "cz",
-    name: "Česko",
-    // 24 x 24
-    grid: [
-      "........................",
-      "........................",
-      "........##########......",
-      "......##############....",
-      ".....###############....",
-      "....################....",
-      "...#################....",
-      "...#################....",
-      "...#################....",
-      "...################.....",
-      "....##############......",
-      ".....############.......",
-      "......###########.......",
-      ".....#############......",
-      "....###############.....",
-      "...#################....",
-      "...##################...",
-      "....#################...",
-      ".....###############....",
-      "......############......",
-      "...........S............",
-      "..............F.........",
-      "........................",
-      "........................"
-    ]
-  },
-  dk: {
-    id: "dk",
-    name: "Dánsko",
-    // 24 x 24 — zjednodušené "Jutland + ostrovy"
-    grid: [
-      "........................",
-      "...........###..........",
-      "..........#####.........",
-      "..........######........",
-      "..........######........",
-      ".........#######........",
-      "........########........",
-      ".......#########........",
-      "......##########........",
-      ".....###########........",
-      "....############........",
-      "...#############........",
-      "..##############........",
-      "..#############.........",
-      "...###########..........",
-      "....#########...........",
-      ".....#######............",
-      "......#####.....###.....",
-      ".......###.....#####....",
-      "........S......#####....",
-      "...............####.....",
-      ".................F......",
-      "........................",
-      "........................"
-    ]
-  }
+  sk: { id:"sk", name:"Slovensko", grid: [
+    "........................",
+    "........................",
+    "...........####.........",
+    ".........#########......",
+    ".......#############....",
+    "......###############...",
+    ".....#################..",
+    "....##################..",
+    "...###################..",
+    "...###################..",
+    "..####################..",
+    "..####################..",
+    "..###################...",
+    "...#################....",
+    "....###############.....",
+    ".....#############......",
+    "......###########.......",
+    "........#######.........",
+    "..........###...........",
+    "...........S............",
+    ".................F......",
+    "........................",
+    "........................",
+    "........................"
+  ]},
+  cz: { id:"cz", name:"Česko", grid: [
+    "........................",
+    "........................",
+    "........##########......",
+    "......##############....",
+    ".....###############....",
+    "....################....",
+    "...#################....",
+    "...#################....",
+    "...#################....",
+    "...################.....",
+    "....##############......",
+    ".....############.......",
+    "......###########.......",
+    ".....#############......",
+    "....###############.....",
+    "...#################....",
+    "...##################...",
+    "....#################...",
+    ".....###############....",
+    "......############......",
+    "...........S............",
+    "..............F.........",
+    "........................",
+    "........................"
+  ]},
+  dk: { id:"dk", name:"Dánsko", grid: [
+    "........................",
+    "...........###..........",
+    "..........#####.........",
+    "..........######........",
+    "..........######........",
+    ".........#######........",
+    "........########........",
+    ".......#########........",
+    "......##########........",
+    ".....###########........",
+    "....############........",
+    "...#############........",
+    "..##############........",
+    "..#############.........",
+    "...###########..........",
+    "....#########...........",
+    ".....#######............",
+    "......#####.....###.....",
+    ".......###.....#####....",
+    "........S......#####....",
+    "...............####.....",
+    ".................F......",
+    "........................",
+    "........................"
+  ]}
 };
 
 function clamp(v, a, b){ return Math.max(a, Math.min(b, v)); }
@@ -166,48 +124,78 @@ class MainScene extends Phaser.Scene {
     this.selectedCar = CARS[this.carIndex];
     this.selectedMap = MAPS[this.mapKeys[this.mapIndex]];
 
-    this.redLight = false;
-    this.penaltyTimer = 0;
-
     this.gridVisible = false;
+
+    // volant (steer) -1..1
+    this.steer = 0;
+    this.wheel = { active:false, id:null, cx:110, cy:VIEW_H-95, r:70 };
   }
 
   create(){
-    // pomocné textúry
     this.makeRectTexture("tex_car", 34, 54, 0xffffff);
     this.makeRectTexture("tex_wall", CELL, CELL, 0x0b2a4a);
-    this.makeRectTexture("tex_land", CELL, CELL, 0x2a2a2a);
     this.makeRectTexture("tex_road", CELL, CELL, 0x202020);
 
-    // UI (fixné na obrazovku)
-    this.uiTitle = this.add.text(VIEW_W/2, 16, "Start–Cíl: Autíčka", { fontSize:"18px", color:"#fff" }).setOrigin(0.5).setScrollFactor(0).setDepth(1000);
-    this.uiMoney = this.add.text(12, 46, "Peníze: 0", { fontSize:"16px", color:"#fff" }).setScrollFactor(0).setDepth(1000);
-    this.uiInfo  = this.add.text(12, 70, "", { fontSize:"14px", color:"#ccc" }).setScrollFactor(0).setDepth(1000);
+    // UI
+    this.uiTitle = this.add.text(VIEW_W/2, 16, "Start–Cíl: Autíčka", { fontSize:"18px", color:"#fff" })
+      .setOrigin(0.5).setScrollFactor(0).setDepth(1000);
+    this.uiMoney = this.add.text(12, 46, "Peníze: 0", { fontSize:"16px", color:"#fff" })
+      .setScrollFactor(0).setDepth(1000);
+    this.uiInfo  = this.add.text(12, 70, "", { fontSize:"14px", color:"#ccc" })
+      .setScrollFactor(0).setDepth(1000);
 
-    // Semafor (fixný)
+    // Semafor UI (zostal)
     this.add.rectangle(VIEW_W-44, 56, 56, 56, 0x0e0e0e).setScrollFactor(0).setDepth(1000);
     this.lightDot = this.add.circle(VIEW_W-44, 56, 16, 0x2bdc4a).setScrollFactor(0).setDepth(1001);
 
-    // Ovládanie (fixné)
+    // Keyboard
     this.cursors = this.input.keyboard.createCursorKeys();
-    this.touch = { left:false, right:false, gas:false };
 
-    const btn=(x,y,label)=>{
-      const b=this.add.rectangle(x,y,110,110,0x000000,0.35).setInteractive().setScrollFactor(0).setDepth(1000);
-      this.add.text(x,y,label,{fontSize:"34px",color:"#fff"}).setOrigin(0.5).setScrollFactor(0).setDepth(1001);
-      return b;
-    };
-    this.leftBtn  = btn(70, VIEW_H-70, "◀");
-    this.rightBtn = btn(200, VIEW_H-70, "▶");
-    this.gasBtn   = btn(VIEW_W-90, VIEW_H-80, "⛽");
+    // Plyn (touch)
+    this.touch = { gas:false };
+    this.gasBtn = this.add.rectangle(VIEW_W-90, VIEW_H-80, 110, 110, 0x000000, 0.35)
+      .setInteractive().setScrollFactor(0).setDepth(1000);
+    this.add.text(VIEW_W-90, VIEW_H-80, "⛽", { fontSize:"34px", color:"#fff" })
+      .setOrigin(0.5).setScrollFactor(0).setDepth(1001);
 
-    const set=(k,v)=>()=>this.touch[k]=v;
-    this.leftBtn.on("pointerdown", set("left", true));
-    this.leftBtn.on("pointerup",   set("left", false));
-    this.rightBtn.on("pointerdown",set("right",true));
-    this.rightBtn.on("pointerup",  set("right",false));
-    this.gasBtn.on("pointerdown",  set("gas", true));
-    this.gasBtn.on("pointerup",    set("gas", false));
+    this.gasBtn.on("pointerdown", ()=> this.touch.gas = true);
+    this.gasBtn.on("pointerup",   ()=> this.touch.gas = false);
+    this.gasBtn.on("pointerout",  ()=> this.touch.gas = false);
+
+    // VOLANT UI
+    this.wheelBase = this.add.circle(this.wheel.cx, this.wheel.cy, this.wheel.r, 0x000000, 0.30)
+      .setScrollFactor(0).setDepth(1000).setInteractive();
+    this.wheelRing = this.add.circle(this.wheel.cx, this.wheel.cy, this.wheel.r-10, 0xffffff, 0.06)
+      .setScrollFactor(0).setDepth(1001);
+    this.wheelKnob = this.add.circle(this.wheel.cx, this.wheel.cy - (this.wheel.r-16), 12, 0xffffff, 0.18)
+      .setScrollFactor(0).setDepth(1002);
+
+    // Volant input (drag)
+    this.input.on("pointerdown", (p)=>{
+      if (this.state !== "playing") return;
+      const dx = p.x - this.wheel.cx;
+      const dy = p.y - this.wheel.cy;
+      if (Math.hypot(dx,dy) <= this.wheel.r){
+        this.wheel.active = true;
+        this.wheel.id = p.id;
+        this.updateWheelFromPointer(p);
+      }
+    });
+
+    this.input.on("pointermove", (p)=>{
+      if (this.state !== "playing") return;
+      if (!this.wheel.active || p.id !== this.wheel.id) return;
+      this.updateWheelFromPointer(p);
+    });
+
+    this.input.on("pointerup", (p)=>{
+      if (!this.wheel.active || p.id !== this.wheel.id) return;
+      this.wheel.active = false;
+      this.wheel.id = null;
+      // vráť volant do stredu
+      this.steer = 0;
+      this.wheelKnob.setPosition(this.wheel.cx, this.wheel.cy - (this.wheel.r-16));
+    });
 
     // G = grid overlay
     this.input.keyboard.on("keydown-G", ()=>{
@@ -216,25 +204,31 @@ class MainScene extends Phaser.Scene {
       if (this.gridLayer) this.gridLayer.setVisible(this.gridVisible);
     });
 
-    // menu overlay
+    // Menu
     this.buildMenu();
 
-    // semafor cycle
-    this.time.addEvent({
-      delay: 2600,
-      loop: true,
-      callback: ()=>{
-        if (this.state !== "playing") return;
-        this.redLight = !this.redLight;
-        this.lightDot.setFillStyle(this.redLight ? 0xff3b30 : 0x2bdc4a);
-      }
-    });
-
-    // Physics default
+    // Physics bounds placeholder
     this.physics.world.setBounds(0, 0, VIEW_W, VIEW_H);
 
     this.refreshMenuTexts();
     this.setState("menu");
+  }
+
+  updateWheelFromPointer(p){
+    const dx = p.x - this.wheel.cx;
+    const dy = p.y - this.wheel.cy;
+
+    // drž knob na kružnici
+    const r = this.wheel.r - 16;
+    const len = Math.hypot(dx, dy) || 1;
+    const nx = dx / len;
+    const ny = dy / len;
+
+    this.wheelKnob.setPosition(this.wheel.cx + nx*r, this.wheel.cy + ny*r);
+
+    // steering podľa vodorovnej odchýlky (jemné, stabilné)
+    const steerRaw = clamp(dx / this.wheel.r, -1, 1);
+    this.steer = steerRaw;
   }
 
   // ---------- MENU ----------
@@ -242,34 +236,35 @@ class MainScene extends Phaser.Scene {
     const w = VIEW_W, h = VIEW_H;
 
     this.menuBg = this.add.rectangle(w/2, h/2, w*0.92, h*0.70, 0x000000, 0.72).setScrollFactor(0).setDepth(2000);
-    this.menuTitle = this.add.text(w/2, h/2 - 240, "Vyber auto a mapu", { fontSize:"22px", color:"#fff" }).setOrigin(0.5).setScrollFactor(0).setDepth(2001);
+    this.menuTitle = this.add.text(w/2, h/2 - 240, "Vyber auto a mapu", { fontSize:"22px", color:"#fff" })
+      .setOrigin(0.5).setScrollFactor(0).setDepth(2001);
 
-    // Car
-    this.menuCarLabel = this.add.text(w/2, h/2 - 180, "AUTO", { fontSize:"14px", color:"#bdbdbd" }).setOrigin(0.5).setScrollFactor(0).setDepth(2001);
-    this.menuCarText  = this.add.text(w/2, h/2 - 150, "", { fontSize:"18px", color:"#fff", align:"center" }).setOrigin(0.5).setScrollFactor(0).setDepth(2001);
+    this.menuCarLabel = this.add.text(w/2, h/2 - 180, "AUTO", { fontSize:"14px", color:"#bdbdbd" })
+      .setOrigin(0.5).setScrollFactor(0).setDepth(2001);
+    this.menuCarText  = this.add.text(w/2, h/2 - 150, "", { fontSize:"18px", color:"#fff", align:"center" })
+      .setOrigin(0.5).setScrollFactor(0).setDepth(2001);
 
     this.btnCarPrev = this.add.rectangle(w/2-120, h/2 - 110, 90, 54, 0x222, 1).setInteractive().setScrollFactor(0).setDepth(2001);
     this.btnCarNext = this.add.rectangle(w/2+120, h/2 - 110, 90, 54, 0x222, 1).setInteractive().setScrollFactor(0).setDepth(2001);
     this.add.text(w/2-120, h/2 - 110, "◀", { fontSize:"26px", color:"#fff" }).setOrigin(0.5).setScrollFactor(0).setDepth(2002);
     this.add.text(w/2+120, h/2 - 110, "▶", { fontSize:"26px", color:"#fff" }).setOrigin(0.5).setScrollFactor(0).setDepth(2002);
 
-    // Map
-    this.menuMapLabel = this.add.text(w/2, h/2 - 55, "MAPA", { fontSize:"14px", color:"#bdbdbd" }).setOrigin(0.5).setScrollFactor(0).setDepth(2001);
-    this.menuMapText  = this.add.text(w/2, h/2 - 25, "", { fontSize:"18px", color:"#fff", align:"center" }).setOrigin(0.5).setScrollFactor(0).setDepth(2001);
+    this.menuMapLabel = this.add.text(w/2, h/2 - 55, "MAPA", { fontSize:"14px", color:"#bdbdbd" })
+      .setOrigin(0.5).setScrollFactor(0).setDepth(2001);
+    this.menuMapText  = this.add.text(w/2, h/2 - 25, "", { fontSize:"18px", color:"#fff", align:"center" })
+      .setOrigin(0.5).setScrollFactor(0).setDepth(2001);
 
     this.btnMapPrev = this.add.rectangle(w/2-120, h/2 + 15, 90, 54, 0x222, 1).setInteractive().setScrollFactor(0).setDepth(2001);
     this.btnMapNext = this.add.rectangle(w/2+120, h/2 + 15, 90, 54, 0x222, 1).setInteractive().setScrollFactor(0).setDepth(2001);
     this.add.text(w/2-120, h/2 + 15, "◀", { fontSize:"26px", color:"#fff" }).setOrigin(0.5).setScrollFactor(0).setDepth(2002);
     this.add.text(w/2+120, h/2 + 15, "▶", { fontSize:"26px", color:"#fff" }).setOrigin(0.5).setScrollFactor(0).setDepth(2002);
 
-    // Start
     this.btnStart = this.add.rectangle(w/2, h/2 + 125, 240, 66, 0x2bdc4a, 1).setInteractive().setScrollFactor(0).setDepth(2001);
     this.add.text(w/2, h/2 + 125, "START", { fontSize:"22px", color:"#111" }).setOrigin(0.5).setScrollFactor(0).setDepth(2002);
 
-    // Hint
     this.menuHint = this.add.text(
       w/2, h/2 + 195,
-      "Ovládanie: šípky alebo tlačidlá\nG = zapnúť/vypnúť mriežku mapy",
+      "Plyn: ⛽ / ↑ • Volant: kruh vľavo dole / ← →\nG = mriežka",
       { fontSize:"13px", color:"#cfcfcf", align:"center" }
     ).setOrigin(0.5).setScrollFactor(0).setDepth(2001);
 
@@ -301,7 +296,6 @@ class MainScene extends Phaser.Scene {
   refreshMenuTexts(){
     const c = this.selectedCar;
     this.menuCarText.setText(`${c.name}\nmax ${c.maxSpeed}`);
-
     const m = this.selectedMap;
     this.menuMapText.setText(`${m.name}`);
   }
@@ -309,16 +303,21 @@ class MainScene extends Phaser.Scene {
   setState(s){
     this.state = s;
     const show = (s === "menu");
-
-    const menuEls = [
+    [
       this.menuBg, this.menuTitle,
       this.menuCarLabel, this.menuCarText,
       this.btnCarPrev, this.btnCarNext,
       this.menuMapLabel, this.menuMapText,
       this.btnMapPrev, this.btnMapNext,
       this.btnStart, this.menuHint
-    ];
-    menuEls.forEach(o => o.setVisible(show));
+    ].forEach(o => o.setVisible(show));
+
+    // volant + plyn iba pri hre
+    const playing = (s === "playing");
+    this.wheelBase.setVisible(playing);
+    this.wheelRing.setVisible(playing);
+    this.wheelKnob.setVisible(playing);
+    this.gasBtn.setVisible(playing);
 
     if (show){
       this.uiInfo.setText("Dojeď do cíle. Peníze dostaneš až na konci.");
@@ -328,26 +327,21 @@ class MainScene extends Phaser.Scene {
 
   // ---------- WORLD BUILD ----------
   clearWorld(){
-    // zmaž staré objekty (ak existujú)
     if (this.landLayer) this.landLayer.destroy(true);
     if (this.wallGroup) this.wallGroup.clear(true, true);
     if (this.obstacles) this.obstacles.clear(true, true);
-    if (this.redZone) this.redZone.destroy();
     if (this.finishZone) this.finishZone.destroy();
     if (this.car) this.car.destroy();
+    if (this.gridLayer) this.gridLayer.destroy(true);
 
     this.landLayer = null;
     this.wallGroup = null;
     this.obstacles = null;
-    this.redZone = null;
     this.finishZone = null;
     this.car = null;
-
-    if (this.gridLayer) this.gridLayer.destroy(true);
     this.gridLayer = null;
   }
 
-  // Vygeneruje: world bounds, land tiles, wall tiles, start/finish, obstacles
   buildWorld(mapDef){
     this.clearWorld();
 
@@ -355,23 +349,17 @@ class MainScene extends Phaser.Scene {
     const rows = grid.length;
     const cols = grid[0].length;
 
-    // world size
     this.worldW = cols * CELL;
     this.worldH = rows * CELL;
     this.physics.world.setBounds(0, 0, this.worldW, this.worldH);
 
-    // pozadie (kamera "world")
     this.landLayer = this.add.container(0,0);
-
-    // wall group (nepriechodné)
     this.wallGroup = this.physics.add.staticGroup();
     this.obstacles = this.physics.add.staticGroup();
 
-    // start/finish fallback
     let startCell = null;
     let finishCell = null;
 
-    // vykreslenie a steny
     for (let y=0; y<rows; y++){
       const line = grid[y];
       for (let x=0; x<cols; x++){
@@ -381,24 +369,13 @@ class MainScene extends Phaser.Scene {
 
         const isLand = (ch === "#" || ch === "S" || ch === "F");
         if (isLand){
-          // land tile (jazditeľné)
           const t = this.add.image(cx, cy, "tex_road");
-          t.setAlpha(1);
           this.landLayer.add(t);
-
-          // jemný "stredový pruh" pre pocit cesty (len na niektorých dlaždiciach)
-          if ((x + y) % 6 === 0){
-            const dash = this.add.rectangle(cx, cy, 8, 24, 0xf7e600, 0.85);
-            dash.setRotation((x % 2) ? 0 : Math.PI/2);
-            this.landLayer.add(dash);
-          }
 
           if (ch === "S") startCell = {x, y};
           if (ch === "F") finishCell = {x, y};
         } else {
-          // water/void tile vizuál + kolízia ako stena
           const t = this.add.image(cx, cy, "tex_wall");
-          t.setAlpha(0.95);
           this.landLayer.add(t);
 
           const wall = this.add.rectangle(cx, cy, CELL, CELL, 0x000000, 0);
@@ -412,15 +389,10 @@ class MainScene extends Phaser.Scene {
     this.gridLayer = this.add.graphics();
     this.gridLayer.setVisible(this.gridVisible);
     this.gridLayer.lineStyle(1, 0xffffff, 0.10);
-    for (let y=0; y<=rows; y++){
-      this.gridLayer.lineBetween(0, y*CELL, this.worldW, y*CELL);
-    }
-    for (let x=0; x<=cols; x++){
-      this.gridLayer.lineBetween(x*CELL, 0, x*CELL, this.worldH);
-    }
+    for (let y=0; y<=rows; y++) this.gridLayer.lineBetween(0, y*CELL, this.worldW, y*CELL);
+    for (let x=0; x<=cols; x++) this.gridLayer.lineBetween(x*CELL, 0, x*CELL, this.worldH);
     this.gridLayer.setDepth(10);
 
-    // start/finish zone
     const s = startCell || { x: Math.floor(cols/2), y: rows-2 };
     const f = finishCell || { x: Math.floor(cols/2), y: 1 };
 
@@ -429,28 +401,22 @@ class MainScene extends Phaser.Scene {
     const fx = f.x*CELL + CELL/2;
     const fy = f.y*CELL + CELL/2;
 
-    // vizuálne línie
+    // Start / Finish línie
     this.landLayer.add(this.add.rectangle(sx, sy, CELL*0.92, 10, 0xffffff, 1));
     this.landLayer.add(this.add.rectangle(fx, fy, CELL*0.92, 8, 0x4ea3ff, 1));
-
-    this.redZone = this.add.zone(sx, sy + CELL*0.8, CELL*0.92, CELL*1.4);
-    this.physics.add.existing(this.redZone, true);
 
     this.finishZone = this.add.zone(fx, fy, CELL*0.92, CELL*0.92);
     this.physics.add.existing(this.finishZone, true);
 
-    // náhodné prekážky na zemi (len na land)
+    // jednoduché prekážky
     const landCells = [];
     for (let y=0; y<rows; y++){
       for (let x=0; x<cols; x++){
         const ch = grid[y][x];
-        if (ch === "#" && !(x === s.x && y === s.y) && !(x === f.x && y === f.y)){
-          landCells.push({x,y});
-        }
+        if (ch === "#" && !(x === s.x && y === s.y) && !(x === f.x && y === f.y)) landCells.push({x,y});
       }
     }
     Phaser.Utils.Array.Shuffle(landCells);
-
     const obsCount = Math.min(10, Math.floor(landCells.length * 0.08));
     for (let i=0; i<obsCount; i++){
       const c = landCells[i];
@@ -463,8 +429,7 @@ class MainScene extends Phaser.Scene {
     }
 
     // car
-    const baseW = 34;
-    const baseH = 54;
+    const baseW = 34, baseH = 54;
     const wMul = this.selectedCar.widthMul || 1;
     const hMul = this.selectedCar.heightMul || 1;
 
@@ -476,12 +441,10 @@ class MainScene extends Phaser.Scene {
     this.car.setCollideWorldBounds(true);
     this.car.body.setMaxVelocity(this.selectedCar.maxSpeed, this.selectedCar.maxSpeed);
 
-    // collisions
     this.physics.add.collider(this.car, this.wallGroup, ()=>this.onCrash(), null, this);
     this.physics.add.collider(this.car, this.obstacles, ()=>this.onCrash(), null, this);
     this.physics.add.overlap(this.car, this.finishZone, ()=>this.onFinish(), null, this);
 
-    // kamera follow
     this.cameras.main.setBounds(0,0,this.worldW,this.worldH);
     this.cameras.main.startFollow(this.car, true, 0.12, 0.12);
     this.cameras.main.setDeadzone(40, 60);
@@ -489,9 +452,9 @@ class MainScene extends Phaser.Scene {
 
   startGame(){
     this.money = 0;
-    this.penaltyTimer = 0;
-    this.redLight = false;
-    this.lightDot.setFillStyle(0x2bdc4a);
+    this.steer = 0;
+    this.wheel.active = false;
+    this.wheel.id = null;
 
     this.buildWorld(this.selectedMap);
 
@@ -499,7 +462,6 @@ class MainScene extends Phaser.Scene {
     this.setState("playing");
   }
 
-  // ---------- GAME LOGIC ----------
   onCrash(){
     if (this.state !== "playing") return;
     this.money = Math.max(0, this.money - RULES.crashPenalty);
@@ -515,7 +477,6 @@ class MainScene extends Phaser.Scene {
     this.uiInfo.setText(`🏁 CÍL! Peníze: ${this.money} (best: ${this.best})`);
     this.setState("menu");
 
-    // reset camera (keď sa vráti do menu)
     this.cameras.main.stopFollow();
     this.cameras.main.scrollX = 0;
     this.cameras.main.scrollY = 0;
@@ -525,46 +486,33 @@ class MainScene extends Phaser.Scene {
 
   update(_, delta){
     this.uiMoney.setText(`Peníze: ${this.money}`);
-
     if (this.state !== "playing") return;
 
-    const gas  = this.touch.gas  || this.cursors.up.isDown;
-    const left = this.touch.left || this.cursors.left.isDown;
-    const right= this.touch.right|| this.cursors.right.isDown;
+    // vstupy
+    const gas  = this.touch.gas || this.cursors.up.isDown;
 
-    if (left) this.car.body.setAngularVelocity(-160);
-    else if (right) this.car.body.setAngularVelocity(160);
-    else this.car.body.setAngularVelocity(0);
+    // keyboard steer fallback
+    let kbSteer = 0;
+    if (this.cursors.left.isDown) kbSteer -= 1;
+    if (this.cursors.right.isDown) kbSteer += 1;
+
+    const steer = clamp(this.steer + kbSteer, -1, 1);
+
+    // zatáčanie
+    const turnSpeed = 220; // deg/s (Arcade angular velocity is deg/s)
+    this.car.body.setAngularVelocity(steer * turnSpeed);
 
     if (gas){
       const angleDeg = (this.car.rotation * 180/Math.PI) - 90;
       const v = new Phaser.Math.Vector2();
       this.physics.velocityFromAngle(angleDeg, this.selectedCar.maxSpeed, v);
 
-      // plynule pridávanie
       const a = clamp((this.selectedCar.accel || 520) / 800, 0.05, 0.18);
       this.car.body.velocity.x = Phaser.Math.Linear(this.car.body.velocity.x, v.x, a);
       this.car.body.velocity.y = Phaser.Math.Linear(this.car.body.velocity.y, v.y, a);
     }
-
-    // červená zóna + červená = penalizácia
-    const inRedZone = Phaser.Geom.Intersects.RectangleToRectangle(
-      this.redZone.getBounds(),
-      this.car.getBounds()
-    );
-
-    if (this.redLight && inRedZone && gas){
-      this.penaltyTimer += delta;
-
-      const step = 250;
-      while (this.penaltyTimer >= step){
-        this.penaltyTimer -= step;
-        this.money = Math.max(0, this.money - 3);
-      }
-    }
   }
 
-  // ---------- HELPERS ----------
   makeRectTexture(key, w, h, color){
     if (this.textures.exists(key)) return;
     const g = this.add.graphics();
