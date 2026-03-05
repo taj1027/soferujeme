@@ -1,27 +1,31 @@
 // Start–Cíl: Autíčka (v5) — Phaser 3
-// ZMENY:
-// - Volant sa NEVRACIA do stredu (ostáva otočený).
-// - Volant sa otáča SPOLU S AUTOM (vizuálne kopíruje uhol auta).
-// - Auto sa otáča podľa volantu LEN keď sa hýbe (žiadne točenie na mieste).
-// - Menu šípky/texte majú referencie a schovávajú sa (žiadne 4 biele šípky uprostred).
+// FIXY:
+// 1) Auto sa točí aj na mieste podľa volantu (a NESPINUJE donekonečna) — sleduje cieľový uhol.
+// 2) Volant sa NEVRACIA — ostáva natočený, aby bolo hneď vidieť zmenu.
+// 3) Volant je pekný trojramenný (3 spokes) a vizuálne sa otáča.
+// 4) Štart je vždy na platnom políčku mapy (S). Ak S chýba alebo je zlé, nájde sa bezpečné land miesto.
+// 5) Odstránené 4 biele šípky — všetky menu texty a UI prvky majú referencie a schovávajú sa.
+//
+// OVLÁDANIE:
+// - Plyn: ⛽ alebo ↑
+// - Volant: trojramenný kruh vľavo dole (ťahaj) alebo ← →
+// - G: mriežka (debug)
 
 const VIEW_W = 390;
 const VIEW_H = 780;
 
 const CELL = 44;
 
-// Autá
 const CARS = [
-  { id: "taxi",    name: "Taxi",    color: 0xffd800, maxSpeed: 230, accel: 520 },
-  { id: "motorka", name: "Motorka", color: 0xFF69B4, maxSpeed: 280, accel: 560, widthMul: 0.55, heightMul: 0.85 },
-  { id: "auto",    name: "Auto",    color: 0xffffff, maxSpeed: 240, accel: 520, widthMul: 1.0, heightMul: 1.0 }
+  { id:"taxi",    name:"Taxi",    color:0xffd800, maxSpeed:230, accel:520 },
+  { id:"motorka", name:"Motorka", color:0xFF69B4, maxSpeed:280, accel:560, widthMul:0.55, heightMul:0.85 },
+  { id:"auto",    name:"Auto",    color:0xffffff, maxSpeed:240, accel:520, widthMul:1.0, heightMul:1.0 }
 ];
 
 const RULES = { finishReward: 100, crashPenalty: 10 };
 
-// GRID mapy (jednoducho upraviteľné)
 const MAPS = {
-  sk: { id: "sk", name: "Slovensko", grid: [
+  sk: { id:"sk", name:"Slovensko", grid: [
     "........................",
     "........................",
     "...........####.........",
@@ -47,7 +51,7 @@ const MAPS = {
     "........................",
     "........................"
   ]},
-  cz: { id: "cz", name: "Česko", grid: [
+  cz: { id:"cz", name:"Česko", grid: [
     "........................",
     "........................",
     "........##########......",
@@ -73,7 +77,7 @@ const MAPS = {
     "........................",
     "........................"
   ]},
-  dk: { id: "dk", name: "Dánsko", grid: [
+  dk: { id:"dk", name:"Dánsko", grid: [
     "........................",
     "...........###..........",
     "..........#####.........",
@@ -120,11 +124,20 @@ class MainScene extends Phaser.Scene {
 
     this.gridVisible = false;
 
-    // Volant: cieľový uhol auta (rad)
-    this.targetAngle = 0;
+    // steering
+    this.steer = 0; // -1..1
+    this.wheelAngle = 0; // rad, vizuálny uhol volantu (0 = rovno)
+    this.steerBaseRot = 0; // rad, základ auta pri začiatku ťahania volantu
+    this.desiredCarRot = 0; // rad, cieľový uhol auta
 
-    // Volant UI
-    this.wheel = { active:false, id:null, cx:110, cy:VIEW_H-95, r:70 };
+    this.wheel = {
+      active:false,
+      id:null,
+      cx:110,
+      cy:VIEW_H-95,
+      r:72,
+      maxWheelRad: Phaser.Math.DegToRad(110) // ako veľmi sa dá “vytočiť” volant
+    };
   }
 
   create(){
@@ -135,14 +148,12 @@ class MainScene extends Phaser.Scene {
     // UI
     this.uiTitle = this.add.text(VIEW_W/2, 16, "Start–Cíl: Autíčka", { fontSize:"18px", color:"#fff" })
       .setOrigin(0.5).setScrollFactor(0).setDepth(1000);
-
     this.uiMoney = this.add.text(12, 46, "Peníze: 0", { fontSize:"16px", color:"#fff" })
       .setScrollFactor(0).setDepth(1000);
-
     this.uiInfo  = this.add.text(12, 70, "", { fontSize:"14px", color:"#ccc" })
       .setScrollFactor(0).setDepth(1000);
 
-    // Semafor (len vizuál)
+    // Semafor UI (len vizuál)
     this.uiLightBox = this.add.rectangle(VIEW_W-44, 56, 56, 56, 0x0e0e0e).setScrollFactor(0).setDepth(1000);
     this.lightDot = this.add.circle(VIEW_W-44, 56, 16, 0x2bdc4a).setScrollFactor(0).setDepth(1001);
 
@@ -160,13 +171,8 @@ class MainScene extends Phaser.Scene {
     this.gasBtn.on("pointerup",   ()=> this.touch.gas = false);
     this.gasBtn.on("pointerout",  ()=> this.touch.gas = false);
 
-    // VOLANT UI
-    this.wheelBase = this.add.circle(this.wheel.cx, this.wheel.cy, this.wheel.r, 0x000000, 0.30)
-      .setScrollFactor(0).setDepth(1000);
-    this.wheelRing = this.add.circle(this.wheel.cx, this.wheel.cy, this.wheel.r-10, 0xffffff, 0.06)
-      .setScrollFactor(0).setDepth(1001);
-    this.wheelKnob = this.add.circle(this.wheel.cx, this.wheel.cy - (this.wheel.r-16), 12, 0xffffff, 0.18)
-      .setScrollFactor(0).setDepth(1002);
+    // VOLANT UI (pekný trojramenný)
+    this.buildSteeringWheelUI();
 
     // Volant input (drag)
     this.input.on("pointerdown", (p)=>{
@@ -176,23 +182,32 @@ class MainScene extends Phaser.Scene {
       if (Math.hypot(dx,dy) <= this.wheel.r){
         this.wheel.active = true;
         this.wheel.id = p.id;
-        this.updateTargetAngleFromPointer(p);
+
+        // základ auta si zoberieme v momente, keď začneme ťahať volant
+        this.steerBaseRot = this.car ? this.car.rotation : 0;
+
+        this.updateWheelFromPointer(p);
       }
     });
 
     this.input.on("pointermove", (p)=>{
       if (this.state !== "playing") return;
       if (!this.wheel.active || p.id !== this.wheel.id) return;
-      this.updateTargetAngleFromPointer(p);
+      this.updateWheelFromPointer(p);
     });
 
-    // DÔLEŽITÉ: volant sa NEVRACIA — na pointerup nič neresetujeme
+    const releaseWheel = ()=>{
+      // volant NEVRACIAME — len ukončíme drag
+      this.wheel.active = false;
+      this.wheel.id = null;
+      // steer ostáva podľa wheelAngle (aby bolo vidieť natočenie aj bez plynu)
+    };
+
     this.input.on("pointerup", (p)=>{
-      if (this.wheel.active && p.id === this.wheel.id){
-        this.wheel.active = false;
-        this.wheel.id = null;
-      }
+      if (!this.wheel.active || p.id !== this.wheel.id) return;
+      releaseWheel();
     });
+    this.input.on("pointerupoutside", ()=>{ if (this.wheel.active) releaseWheel(); });
 
     // G = grid overlay
     this.input.keyboard.on("keydown-G", ()=>{
@@ -203,21 +218,85 @@ class MainScene extends Phaser.Scene {
 
     // Menu
     this.buildMenu();
+
+    // Physics bounds placeholder
+    this.physics.world.setBounds(0, 0, VIEW_W, VIEW_H);
+
     this.refreshMenuTexts();
     this.setState("menu");
   }
 
-  // Nastaví cieľový uhol auta podľa smeru ťahania volantu
-  updateTargetAngleFromPointer(p){
+  buildSteeringWheelUI(){
+    // container, ktorý budeme otáčať
+    this.wheelContainer = this.add.container(this.wheel.cx, this.wheel.cy)
+      .setScrollFactor(0)
+      .setDepth(1002);
+
+    // základ (tienisté pozadie)
+    this.wheelBase = this.add.circle(this.wheel.cx, this.wheel.cy, this.wheel.r, 0x000000, 0.32)
+      .setScrollFactor(0).setDepth(1000);
+
+    // samotný volant kreslíme ako graphics
+    const g = this.add.graphics();
+    const R = this.wheel.r - 10;
+    const rInner = 18;
+
+    // vonkajší ring
+    g.lineStyle(10, 0xffffff, 0.22);
+    g.strokeCircle(0, 0, R);
+
+    // jemný vnútorný ring
+    g.lineStyle(3, 0xffffff, 0.18);
+    g.strokeCircle(0, 0, R-10);
+
+    // 3 ramená
+    g.lineStyle(10, 0xffffff, 0.22);
+    for (let i=0; i<3; i++){
+      const a = i * (Math.PI*2/3);
+      const x1 = Math.cos(a) * (rInner+6);
+      const y1 = Math.sin(a) * (rInner+6);
+      const x2 = Math.cos(a) * (R-18);
+      const y2 = Math.sin(a) * (R-18);
+      g.lineBetween(x1, y1, x2, y2);
+    }
+
+    // stred (hub)
+    g.fillStyle(0xffffff, 0.18);
+    g.fillCircle(0, 0, rInner);
+
+    // malá šípka hore (indikátor “rovno”)
+    g.fillStyle(0xffffff, 0.25);
+    g.fillTriangle(0, -(R-6), -7, -(R-18), 7, -(R-18));
+
+    this.wheelGraphic = g;
+
+    this.wheelContainer.add([this.wheelGraphic]);
+
+    // inicialne rovno
+    this.wheelContainer.rotation = 0;
+  }
+
+  updateWheelFromPointer(p){
     const dx = p.x - this.wheel.cx;
     const dy = p.y - this.wheel.cy;
 
-    // uhol smeru od stredu volantu
-    const a = Math.atan2(dy, dx);
+    // uhol pointera okolo stredu
+    // chceme 0 = hore, + doprava (clockwise v phaser rotácii je ok)
+    let ang = Math.atan2(dy, dx);          // -PI..PI, 0 je doprava
+    ang = Phaser.Math.Angle.Wrap(ang + Math.PI/2); // 0 je hore
 
-    // Prevod na uhol auta: tak, aby rotation=0 znamenalo "dopredu hore"
-    // (potom velocityFromAngle(rotation-90deg) ide hore)
-    this.targetAngle = a + Math.PI / 2;
+    // obmedz vytočenie volantu (aby to bolo ako volant, nie nekonečný kruh)
+    ang = clamp(ang, -this.wheel.maxWheelRad, this.wheel.maxWheelRad);
+
+    this.wheelAngle = ang;
+    this.steer = clamp(this.wheelAngle / this.wheel.maxWheelRad, -1, 1);
+
+    // vizuál volantu
+    this.wheelContainer.rotation = this.wheelAngle;
+
+    // cieľový uhol auta: “rovnako natočené ako volant” RELATÍVNE k základnému uhlu auta pri začiatku ťahu
+    // (takto to nikdy nepôjde do nekonečna, len sa nastaví cieľ a tam sa zastaví)
+    this.desiredCarRot = this.steerBaseRot + this.wheelAngle;
   }
 
   // ---------- MENU ----------
@@ -236,8 +315,10 @@ class MainScene extends Phaser.Scene {
 
     this.btnCarPrev = this.add.rectangle(w/2-120, h/2 - 110, 90, 54, 0x222, 1).setInteractive().setScrollFactor(0).setDepth(2001);
     this.btnCarNext = this.add.rectangle(w/2+120, h/2 - 110, 90, 54, 0x222, 1).setInteractive().setScrollFactor(0).setDepth(2001);
-    this.btnCarPrevTxt = this.add.text(w/2-120, h/2 - 110, "◀", { fontSize:"26px", color:"#fff" }).setOrigin(0.5).setScrollFactor(0).setDepth(2002);
-    this.btnCarNextTxt = this.add.text(w/2+120, h/2 - 110, "▶", { fontSize:"26px", color:"#fff" }).setOrigin(0.5).setScrollFactor(0).setDepth(2002);
+    this.btnCarPrevTxt = this.add.text(w/2-120, h/2 - 110, "◀", { fontSize:"26px", color:"#fff" })
+      .setOrigin(0.5).setScrollFactor(0).setDepth(2002);
+    this.btnCarNextTxt = this.add.text(w/2+120, h/2 - 110, "▶", { fontSize:"26px", color:"#fff" })
+      .setOrigin(0.5).setScrollFactor(0).setDepth(2002);
 
     // Map
     this.menuMapLabel = this.add.text(w/2, h/2 - 55, "MAPA", { fontSize:"14px", color:"#bdbdbd" })
@@ -247,8 +328,10 @@ class MainScene extends Phaser.Scene {
 
     this.btnMapPrev = this.add.rectangle(w/2-120, h/2 + 15, 90, 54, 0x222, 1).setInteractive().setScrollFactor(0).setDepth(2001);
     this.btnMapNext = this.add.rectangle(w/2+120, h/2 + 15, 90, 54, 0x222, 1).setInteractive().setScrollFactor(0).setDepth(2001);
-    this.btnMapPrevTxt = this.add.text(w/2-120, h/2 + 15, "◀", { fontSize:"26px", color:"#fff" }).setOrigin(0.5).setScrollFactor(0).setDepth(2002);
-    this.btnMapNextTxt = this.add.text(w/2+120, h/2 + 15, "▶", { fontSize:"26px", color:"#fff" }).setOrigin(0.5).setScrollFactor(0).setDepth(2002);
+    this.btnMapPrevTxt = this.add.text(w/2-120, h/2 + 15, "◀", { fontSize:"26px", color:"#fff" })
+      .setOrigin(0.5).setScrollFactor(0).setDepth(2002);
+    this.btnMapNextTxt = this.add.text(w/2+120, h/2 + 15, "▶", { fontSize:"26px", color:"#fff" })
+      .setOrigin(0.5).setScrollFactor(0).setDepth(2002);
 
     // Start
     this.btnStart = this.add.rectangle(w/2, h/2 + 125, 240, 66, 0x2bdc4a, 1).setInteractive().setScrollFactor(0).setDepth(2001);
@@ -257,7 +340,7 @@ class MainScene extends Phaser.Scene {
 
     this.menuHint = this.add.text(
       w/2, h/2 + 195,
-      "Plyn: ⛽ / ↑ • Volant: ťahaj kruh vľavo dole • G = mriežka",
+      "Plyn: ⛽ / ↑ • Volant: trojramenný vľavo dole / ← →\nG = mriežka",
       { fontSize:"13px", color:"#cfcfcf", align:"center" }
     ).setOrigin(0.5).setScrollFactor(0).setDepth(2001);
 
@@ -312,8 +395,7 @@ class MainScene extends Phaser.Scene {
 
     // volant + plyn len pri hre
     this.wheelBase.setVisible(playing);
-    this.wheelRing.setVisible(playing);
-    this.wheelKnob.setVisible(playing);
+    this.wheelContainer.setVisible(playing);
     this.gasBtn.setVisible(playing);
     this.gasTxt.setVisible(playing);
 
@@ -343,13 +425,19 @@ class MainScene extends Phaser.Scene {
   normalizeGrid(grid){
     const rows = grid.length;
     const cols = Math.max(...grid.map(s=>s.length));
-    return grid.map(line => line.padEnd(cols, "."));
+    const out = [];
+    for (let y=0; y<rows; y++){
+      const line = grid[y];
+      out.push(line.padEnd(cols, "."));
+    }
+    return out;
   }
 
   findCell(grid, ch){
     for (let y=0; y<grid.length; y++){
-      for (let x=0; x<grid[y].length; x++){
-        if (grid[y][x] === ch) return {x,y};
+      const line = grid[y];
+      for (let x=0; x<line.length; x++){
+        if (line[x] === ch) return {x,y};
       }
     }
     return null;
@@ -357,8 +445,9 @@ class MainScene extends Phaser.Scene {
 
   findSafeLand(grid){
     for (let y=0; y<grid.length; y++){
-      for (let x=0; x<grid[y].length; x++){
-        const c = grid[y][x];
+      const line = grid[y];
+      for (let x=0; x<line.length; x++){
+        const c = line[x];
         if (c === "#" || c === "S" || c === "F") return {x,y};
       }
     }
@@ -381,16 +470,20 @@ class MainScene extends Phaser.Scene {
     this.obstacles = this.physics.add.staticGroup();
 
     for (let y=0; y<rows; y++){
+      const line = grid[y];
       for (let x=0; x<cols; x++){
-        const ch = grid[y][x];
+        const ch = line[x];
         const cx = x * CELL + CELL/2;
         const cy = y * CELL + CELL/2;
 
         const isLand = (ch === "#" || ch === "S" || ch === "F");
         if (isLand){
-          this.landLayer.add(this.add.image(cx, cy, "tex_road"));
+          const t = this.add.image(cx, cy, "tex_road");
+          this.landLayer.add(t);
         } else {
-          this.landLayer.add(this.add.image(cx, cy, "tex_wall"));
+          const t = this.add.image(cx, cy, "tex_wall");
+          this.landLayer.add(t);
+
           const wall = this.add.rectangle(cx, cy, CELL, CELL, 0x000000, 0);
           this.physics.add.existing(wall, true);
           this.wallGroup.add(wall);
@@ -398,7 +491,7 @@ class MainScene extends Phaser.Scene {
       }
     }
 
-    // GRID overlay
+    // GRID overlay (debug)
     this.gridLayer = this.add.graphics();
     this.gridLayer.setVisible(this.gridVisible);
     this.gridLayer.lineStyle(1, 0xffffff, 0.10);
@@ -406,6 +499,7 @@ class MainScene extends Phaser.Scene {
     for (let x=0; x<=cols; x++) this.gridLayer.lineBetween(x*CELL, 0, x*CELL, this.worldH);
     this.gridLayer.setDepth(10);
 
+    // start/finish
     const startCell = this.findCell(grid, "S") || this.findSafeLand(grid);
     const finishCell = this.findCell(grid, "F") || this.findSafeLand(grid);
 
@@ -414,18 +508,19 @@ class MainScene extends Phaser.Scene {
     const fx = finishCell.x*CELL + CELL/2;
     const fy = finishCell.y*CELL + CELL/2;
 
-    // Start/Finish vizuál
+    // Start / Finish línie
     this.landLayer.add(this.add.rectangle(sx, sy, CELL*0.92, 10, 0xffffff, 1));
     this.landLayer.add(this.add.rectangle(fx, fy, CELL*0.92, 8, 0x4ea3ff, 1));
 
     this.finishZone = this.add.zone(fx, fy, CELL*0.92, CELL*0.92);
     this.physics.add.existing(this.finishZone, true);
 
-    // prekážky
+    // prekážky len na '#'
     const landCells = [];
     for (let y=0; y<rows; y++){
       for (let x=0; x<cols; x++){
-        if (grid[y][x] === "#") landCells.push({x,y});
+        const ch = grid[y][x];
+        if (ch === "#") landCells.push({x,y});
       }
     }
     Phaser.Utils.Array.Shuffle(landCells);
@@ -455,23 +550,33 @@ class MainScene extends Phaser.Scene {
     this.car.setDrag(320, 320);
     this.car.setCollideWorldBounds(true);
     this.car.body.setMaxVelocity(this.selectedCar.maxSpeed, this.selectedCar.maxSpeed);
-    this.car.body.setAngularVelocity(0);
 
-    // cieľový uhol = aktuálny uhol auta (aby to necuklo)
-    this.targetAngle = this.car.rotation;
+    // dôležité: angular velocity riadime my
+    this.car.body.setAngularVelocity(0);
 
     this.physics.add.collider(this.car, this.wallGroup, ()=>this.onCrash(), null, this);
     this.physics.add.collider(this.car, this.obstacles, ()=>this.onCrash(), null, this);
     this.physics.add.overlap(this.car, this.finishZone, ()=>this.onFinish(), null, this);
 
-    // kamera
     this.cameras.main.setBounds(0,0,this.worldW,this.worldH);
     this.cameras.main.startFollow(this.car, true, 0.12, 0.12);
     this.cameras.main.setDeadzone(40, 60);
+
+    // inicializuj cieľový uhol auta
+    this.steerBaseRot = this.car.rotation;
+    this.desiredCarRot = this.car.rotation;
   }
 
   startGame(){
     this.money = 0;
+
+    // reset volant (rovno), ale NEbudeme to už springovať
+    this.steer = 0;
+    this.wheelAngle = 0;
+    this.wheel.active = false;
+    this.wheel.id = null;
+    this.wheelContainer.rotation = 0;
+
     this.buildWorld(this.selectedMap);
 
     this.uiInfo.setText(`Mapa: ${this.selectedMap.name} • Auto: ${this.selectedCar.name}`);
@@ -486,7 +591,6 @@ class MainScene extends Phaser.Scene {
 
   onFinish(){
     if (this.state !== "playing") return;
-
     this.money += RULES.finishReward;
     this.best = Math.max(this.best, this.money);
 
@@ -500,22 +604,51 @@ class MainScene extends Phaser.Scene {
     this.clearWorld();
   }
 
-  update(_, deltaMs){
+  update(_, delta){
     this.uiMoney.setText(`Peníze: ${this.money}`);
     if (this.state !== "playing") return;
 
-    const dt = deltaMs / 1000;
     const gas = this.touch.gas || this.cursors.up.isDown;
 
-    // ak hráč drží klávesy ← →, jemne posuň targetAngle (doplnok k volantu)
-    if (this.cursors.left.isDown)  this.targetAngle -= 2.2 * dt;
-    if (this.cursors.right.isDown) this.targetAngle += 2.2 * dt;
+    // keyboard steer fallback (pridáva/subtrahuje ako “trim”)
+    let kbSteer = 0;
+    if (this.cursors.left.isDown) kbSteer -= 1;
+    if (this.cursors.right.isDown) kbSteer += 1;
 
-    // --- Otáčanie auta podľa targetAngle ---
-    // auto sa má točiť iba keď sa hýbe (alebo keď už má rýchlosť)
-    const speed = this.car.body.speed || 0;
+    // keď držíš šípky, meníme wheelAngle postupne a otáčame volant aj vizuálne
+    if (kbSteer !== 0){
+      const step = Phaser.Math.DegToRad(180) * (delta/1000); // rad/s
+      this.wheelAngle = clamp(this.wheelAngle + kbSteer*step, -this.wheel.maxWheelRad, this.wheel.maxWheelRad);
+      this.steer = clamp(this.wheelAngle / this.wheel.maxWheelRad, -1, 1);
+      this.wheelContainer.rotation = this.wheelAngle;
 
-    // plyn: tlačí auto dopredu podľa aktuálneho smeru auta
+      // ak sa ovláda klávesami (nie drag), držíme baseRot stále “aktuálne”
+      // aby to bolo intuitívne: cieľ je vždy aktuálny uhol + wheelAngle
+      this.steerBaseRot = this.car.rotation;
+      this.desiredCarRot = this.steerBaseRot + this.wheelAngle;
+    }
+
+    // ------- otočenie auta na CIEĽOVÝ uhol (žiadne nekonečné spinovanie) -------
+    // požadovaný uhol je buď z drag volantu (desiredCarRot sa aktualizuje v updateWheelFromPointer),
+    // alebo z kláves (vyššie).
+    // auto sa k nemu dorotáča a zastaví.
+    const diff = Phaser.Math.Angle.Wrap(this.desiredCarRot - this.car.rotation);
+
+    // riadenie: uhol -> angularVelocity (deg/s)
+    const kP = 7.0; // čím vyššie, tým rýchlejšie dorotuje
+    const maxAV = 320; // limit deg/s
+    let av = Phaser.Math.RadToDeg(diff) * kP;
+    av = clamp(av, -maxAV, maxAV);
+
+    // ak je veľmi blízko cieľu, zastav
+    if (Math.abs(diff) < Phaser.Math.DegToRad(0.8)){
+      av = 0;
+      this.car.rotation = this.desiredCarRot; // “zacvakni” presne
+    }
+
+    this.car.body.setAngularVelocity(av);
+
+    // ------- pohyb dopredu -------
     if (gas){
       const angleDeg = (this.car.rotation * 180/Math.PI) - 90;
       const v = new Phaser.Math.Vector2();
@@ -525,40 +658,6 @@ class MainScene extends Phaser.Scene {
       this.car.body.velocity.x = Phaser.Math.Linear(this.car.body.velocity.x, v.x, a);
       this.car.body.velocity.y = Phaser.Math.Linear(this.car.body.velocity.y, v.y, a);
     }
-
-    // rozdiel uhlov (najkratšia cesta) -> angular velocity
-    const diff = Phaser.Math.Angle.Wrap(this.targetAngle - this.car.rotation);
-
-    // natočenie závisí od rýchlosti (keď stojí, netočí sa)
-    const speedN = clamp(speed / 90, 0, 1); // 0..1
-    const canTurn = speed > 8 || gas;
-
-    if (canTurn){
-      // kontrola citlivosti (rad -> deg/s)
-      const k = 10.0; // čím viac, tým rýchlejšie natočí
-      let angVelRad = diff * k * speedN;
-
-      // keď je gas stlačený, nech sa točí aj pri rozbehu (nie úplne 0)
-      if (gas && speedN < 0.15) angVelRad = diff * (k * 0.25);
-
-      // limit
-      angVelRad = clamp(angVelRad, -4.5, 4.5);
-
-      this.car.body.setAngularVelocity(Phaser.Math.RadToDeg(angVelRad));
-    } else {
-      this.car.body.setAngularVelocity(0);
-    }
-
-    // --- Volant sa otáča spolu s autom (vizuálne) ---
-    const wr = this.car.rotation;
-    this.wheelBase.setRotation(wr);
-    this.wheelRing.setRotation(wr);
-
-    // knob na kružnici podľa rotácie auta
-    const r = this.wheel.r - 16;
-    const kx = this.wheel.cx + Math.cos(wr - Math.PI/2) * r;
-    const ky = this.wheel.cy + Math.sin(wr - Math.PI/2) * r;
-    this.wheelKnob.setPosition(kx, ky);
   }
 
   makeRectTexture(key, w, h, color){
