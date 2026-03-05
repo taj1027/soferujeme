@@ -1,30 +1,26 @@
-// Start–Cíl: Autíčka (v3) — Phaser 3
-// ÚPRAVY PODĽA POŽIADAVKY:
-// 1) Odstránené "šipky" z mapy (žiadne overlay šípky v strede).
-// 2) Namiesto tlačidiel doľava/doprava je VOLANT (drag/ťahanie).
-// 3) Odstránené všetky malé "pomlčky" na ceste (dash segmenty).
+// Start–Cíl: Autíčka (v4) — Phaser 3
+// FIXY:
+// 1) Auto sa netočí "donekonečna" — zatáča iba podľa volantu a rýchlosti (na mieste sa netočí).
+// 2) Odstránené 4 biele šípky — všetky menu texty a UI prvky majú referencie a schovávajú sa.
+// 3) Štart je vždy na platnom políčku mapy (S). Ak S chýba alebo je zlé, nájde sa bezpečné land miesto.
 //
 // OVLÁDANIE:
-// - Plyn: tlačidlo ⛽ alebo šípka hore (↑)
-// - Volant: ťahaj kruh vľavo dole (alebo šípky ← → na klávesnici)
-// - G: zapnúť/vypnúť mriežku (debug tvaru mapy)
+// - Plyn: ⛽ alebo ↑
+// - Volant: kruh vľavo dole (ťahaj) alebo ← →
+// - G: mriežka (debug)
 
 const VIEW_W = 390;
 const VIEW_H = 780;
 
 const CELL = 44;
 
-// Autá
 const CARS = [
   { id:"taxi",    name:"Taxi",    color:0xffd800, maxSpeed:230, accel:520 },
   { id:"motorka", name:"Motorka", color:0xFF69B4, maxSpeed:280, accel:560, widthMul:0.55, heightMul:0.85 },
   { id:"auto",    name:"Auto",    color:0xffffff, maxSpeed:240, accel:520, widthMul:1.0, heightMul:1.0 }
 ];
 
-const RULES = {
-  finishReward: 100,
-  crashPenalty: 10,
-};
+const RULES = { finishReward: 100, crashPenalty: 10 };
 
 const MAPS = {
   sk: { id:"sk", name:"Slovensko", grid: [
@@ -126,8 +122,7 @@ class MainScene extends Phaser.Scene {
 
     this.gridVisible = false;
 
-    // volant (steer) -1..1
-    this.steer = 0;
+    this.steer = 0; // -1..1
     this.wheel = { active:false, id:null, cx:110, cy:VIEW_H-95, r:70 };
   }
 
@@ -144,8 +139,8 @@ class MainScene extends Phaser.Scene {
     this.uiInfo  = this.add.text(12, 70, "", { fontSize:"14px", color:"#ccc" })
       .setScrollFactor(0).setDepth(1000);
 
-    // Semafor UI (zostal)
-    this.add.rectangle(VIEW_W-44, 56, 56, 56, 0x0e0e0e).setScrollFactor(0).setDepth(1000);
+    // Semafor UI (len vizuál)
+    this.uiLightBox = this.add.rectangle(VIEW_W-44, 56, 56, 56, 0x0e0e0e).setScrollFactor(0).setDepth(1000);
     this.lightDot = this.add.circle(VIEW_W-44, 56, 16, 0x2bdc4a).setScrollFactor(0).setDepth(1001);
 
     // Keyboard
@@ -155,7 +150,7 @@ class MainScene extends Phaser.Scene {
     this.touch = { gas:false };
     this.gasBtn = this.add.rectangle(VIEW_W-90, VIEW_H-80, 110, 110, 0x000000, 0.35)
       .setInteractive().setScrollFactor(0).setDepth(1000);
-    this.add.text(VIEW_W-90, VIEW_H-80, "⛽", { fontSize:"34px", color:"#fff" })
+    this.gasTxt = this.add.text(VIEW_W-90, VIEW_H-80, "⛽", { fontSize:"34px", color:"#fff" })
       .setOrigin(0.5).setScrollFactor(0).setDepth(1001);
 
     this.gasBtn.on("pointerdown", ()=> this.touch.gas = true);
@@ -164,7 +159,7 @@ class MainScene extends Phaser.Scene {
 
     // VOLANT UI
     this.wheelBase = this.add.circle(this.wheel.cx, this.wheel.cy, this.wheel.r, 0x000000, 0.30)
-      .setScrollFactor(0).setDepth(1000).setInteractive();
+      .setScrollFactor(0).setDepth(1000);
     this.wheelRing = this.add.circle(this.wheel.cx, this.wheel.cy, this.wheel.r-10, 0xffffff, 0.06)
       .setScrollFactor(0).setDepth(1001);
     this.wheelKnob = this.add.circle(this.wheel.cx, this.wheel.cy - (this.wheel.r-16), 12, 0xffffff, 0.18)
@@ -188,14 +183,19 @@ class MainScene extends Phaser.Scene {
       this.updateWheelFromPointer(p);
     });
 
-    this.input.on("pointerup", (p)=>{
-      if (!this.wheel.active || p.id !== this.wheel.id) return;
+    const releaseWheel = ()=>{
       this.wheel.active = false;
       this.wheel.id = null;
-      // vráť volant do stredu
       this.steer = 0;
       this.wheelKnob.setPosition(this.wheel.cx, this.wheel.cy - (this.wheel.r-16));
+    };
+
+    this.input.on("pointerup", (p)=>{
+      if (!this.wheel.active || p.id !== this.wheel.id) return;
+      releaseWheel();
     });
+    // keď pustíš mimo canvas / stratí sa pointer
+    this.input.on("pointerupoutside", ()=>{ if (this.wheel.active) releaseWheel(); });
 
     // G = grid overlay
     this.input.keyboard.on("keydown-G", ()=>{
@@ -218,17 +218,14 @@ class MainScene extends Phaser.Scene {
     const dx = p.x - this.wheel.cx;
     const dy = p.y - this.wheel.cy;
 
-    // drž knob na kružnici
     const r = this.wheel.r - 16;
     const len = Math.hypot(dx, dy) || 1;
     const nx = dx / len;
     const ny = dy / len;
-
     this.wheelKnob.setPosition(this.wheel.cx + nx*r, this.wheel.cy + ny*r);
 
-    // steering podľa vodorovnej odchýlky (jemné, stabilné)
-    const steerRaw = clamp(dx / this.wheel.r, -1, 1);
-    this.steer = steerRaw;
+    // steering podľa X
+    this.steer = clamp(dx / this.wheel.r, -1, 1);
   }
 
   // ---------- MENU ----------
@@ -239,6 +236,7 @@ class MainScene extends Phaser.Scene {
     this.menuTitle = this.add.text(w/2, h/2 - 240, "Vyber auto a mapu", { fontSize:"22px", color:"#fff" })
       .setOrigin(0.5).setScrollFactor(0).setDepth(2001);
 
+    // Car
     this.menuCarLabel = this.add.text(w/2, h/2 - 180, "AUTO", { fontSize:"14px", color:"#bdbdbd" })
       .setOrigin(0.5).setScrollFactor(0).setDepth(2001);
     this.menuCarText  = this.add.text(w/2, h/2 - 150, "", { fontSize:"18px", color:"#fff", align:"center" })
@@ -246,9 +244,12 @@ class MainScene extends Phaser.Scene {
 
     this.btnCarPrev = this.add.rectangle(w/2-120, h/2 - 110, 90, 54, 0x222, 1).setInteractive().setScrollFactor(0).setDepth(2001);
     this.btnCarNext = this.add.rectangle(w/2+120, h/2 - 110, 90, 54, 0x222, 1).setInteractive().setScrollFactor(0).setDepth(2001);
-    this.add.text(w/2-120, h/2 - 110, "◀", { fontSize:"26px", color:"#fff" }).setOrigin(0.5).setScrollFactor(0).setDepth(2002);
-    this.add.text(w/2+120, h/2 - 110, "▶", { fontSize:"26px", color:"#fff" }).setOrigin(0.5).setScrollFactor(0).setDepth(2002);
+    this.btnCarPrevTxt = this.add.text(w/2-120, h/2 - 110, "◀", { fontSize:"26px", color:"#fff" })
+      .setOrigin(0.5).setScrollFactor(0).setDepth(2002);
+    this.btnCarNextTxt = this.add.text(w/2+120, h/2 - 110, "▶", { fontSize:"26px", color:"#fff" })
+      .setOrigin(0.5).setScrollFactor(0).setDepth(2002);
 
+    // Map
     this.menuMapLabel = this.add.text(w/2, h/2 - 55, "MAPA", { fontSize:"14px", color:"#bdbdbd" })
       .setOrigin(0.5).setScrollFactor(0).setDepth(2001);
     this.menuMapText  = this.add.text(w/2, h/2 - 25, "", { fontSize:"18px", color:"#fff", align:"center" })
@@ -256,11 +257,15 @@ class MainScene extends Phaser.Scene {
 
     this.btnMapPrev = this.add.rectangle(w/2-120, h/2 + 15, 90, 54, 0x222, 1).setInteractive().setScrollFactor(0).setDepth(2001);
     this.btnMapNext = this.add.rectangle(w/2+120, h/2 + 15, 90, 54, 0x222, 1).setInteractive().setScrollFactor(0).setDepth(2001);
-    this.add.text(w/2-120, h/2 + 15, "◀", { fontSize:"26px", color:"#fff" }).setOrigin(0.5).setScrollFactor(0).setDepth(2002);
-    this.add.text(w/2+120, h/2 + 15, "▶", { fontSize:"26px", color:"#fff" }).setOrigin(0.5).setScrollFactor(0).setDepth(2002);
+    this.btnMapPrevTxt = this.add.text(w/2-120, h/2 + 15, "◀", { fontSize:"26px", color:"#fff" })
+      .setOrigin(0.5).setScrollFactor(0).setDepth(2002);
+    this.btnMapNextTxt = this.add.text(w/2+120, h/2 + 15, "▶", { fontSize:"26px", color:"#fff" })
+      .setOrigin(0.5).setScrollFactor(0).setDepth(2002);
 
+    // Start
     this.btnStart = this.add.rectangle(w/2, h/2 + 125, 240, 66, 0x2bdc4a, 1).setInteractive().setScrollFactor(0).setDepth(2001);
-    this.add.text(w/2, h/2 + 125, "START", { fontSize:"22px", color:"#111" }).setOrigin(0.5).setScrollFactor(0).setDepth(2002);
+    this.btnStartTxt = this.add.text(w/2, h/2 + 125, "START", { fontSize:"22px", color:"#111" })
+      .setOrigin(0.5).setScrollFactor(0).setDepth(2002);
 
     this.menuHint = this.add.text(
       w/2, h/2 + 195,
@@ -302,24 +307,29 @@ class MainScene extends Phaser.Scene {
 
   setState(s){
     this.state = s;
-    const show = (s === "menu");
+    const showMenu = (s === "menu");
+    const playing = (s === "playing");
+
     [
       this.menuBg, this.menuTitle,
       this.menuCarLabel, this.menuCarText,
       this.btnCarPrev, this.btnCarNext,
+      this.btnCarPrevTxt, this.btnCarNextTxt,
       this.menuMapLabel, this.menuMapText,
       this.btnMapPrev, this.btnMapNext,
-      this.btnStart, this.menuHint
-    ].forEach(o => o.setVisible(show));
+      this.btnMapPrevTxt, this.btnMapNextTxt,
+      this.btnStart, this.btnStartTxt,
+      this.menuHint
+    ].forEach(o => o.setVisible(showMenu));
 
-    // volant + plyn iba pri hre
-    const playing = (s === "playing");
+    // volant + plyn len pri hre
     this.wheelBase.setVisible(playing);
     this.wheelRing.setVisible(playing);
     this.wheelKnob.setVisible(playing);
     this.gasBtn.setVisible(playing);
+    this.gasTxt.setVisible(playing);
 
-    if (show){
+    if (showMenu){
       this.uiInfo.setText("Dojeď do cíle. Peníze dostaneš až na konci.");
       this.lightDot.setFillStyle(0x2bdc4a);
     }
@@ -342,10 +352,44 @@ class MainScene extends Phaser.Scene {
     this.gridLayer = null;
   }
 
+  normalizeGrid(grid){
+    // zabezpeč rovnakú dĺžku riadkov
+    const rows = grid.length;
+    const cols = Math.max(...grid.map(s=>s.length));
+    const out = [];
+    for (let y=0; y<rows; y++){
+      const line = grid[y];
+      out.push(line.padEnd(cols, "."));
+    }
+    return out;
+  }
+
+  findCell(grid, ch){
+    for (let y=0; y<grid.length; y++){
+      const line = grid[y];
+      for (let x=0; x<line.length; x++){
+        if (line[x] === ch) return {x,y};
+      }
+    }
+    return null;
+  }
+
+  findSafeLand(grid){
+    // nájdi prvé land políčko (# alebo S alebo F)
+    for (let y=0; y<grid.length; y++){
+      const line = grid[y];
+      for (let x=0; x<line.length; x++){
+        const c = line[x];
+        if (c === "#" || c === "S" || c === "F") return {x,y};
+      }
+    }
+    return {x:0,y:0};
+  }
+
   buildWorld(mapDef){
     this.clearWorld();
 
-    const grid = mapDef.grid;
+    const grid = this.normalizeGrid(mapDef.grid);
     const rows = grid.length;
     const cols = grid[0].length;
 
@@ -356,9 +400,6 @@ class MainScene extends Phaser.Scene {
     this.landLayer = this.add.container(0,0);
     this.wallGroup = this.physics.add.staticGroup();
     this.obstacles = this.physics.add.staticGroup();
-
-    let startCell = null;
-    let finishCell = null;
 
     for (let y=0; y<rows; y++){
       const line = grid[y];
@@ -371,9 +412,6 @@ class MainScene extends Phaser.Scene {
         if (isLand){
           const t = this.add.image(cx, cy, "tex_road");
           this.landLayer.add(t);
-
-          if (ch === "S") startCell = {x, y};
-          if (ch === "F") finishCell = {x, y};
         } else {
           const t = this.add.image(cx, cy, "tex_wall");
           this.landLayer.add(t);
@@ -393,13 +431,14 @@ class MainScene extends Phaser.Scene {
     for (let x=0; x<=cols; x++) this.gridLayer.lineBetween(x*CELL, 0, x*CELL, this.worldH);
     this.gridLayer.setDepth(10);
 
-    const s = startCell || { x: Math.floor(cols/2), y: rows-2 };
-    const f = finishCell || { x: Math.floor(cols/2), y: 1 };
+    // start/finish
+    const startCell = this.findCell(grid, "S") || this.findSafeLand(grid);
+    const finishCell = this.findCell(grid, "F") || this.findSafeLand(grid);
 
-    const sx = s.x*CELL + CELL/2;
-    const sy = s.y*CELL + CELL/2;
-    const fx = f.x*CELL + CELL/2;
-    const fy = f.y*CELL + CELL/2;
+    const sx = startCell.x*CELL + CELL/2;
+    const sy = startCell.y*CELL + CELL/2;
+    const fx = finishCell.x*CELL + CELL/2;
+    const fy = finishCell.y*CELL + CELL/2;
 
     // Start / Finish línie
     this.landLayer.add(this.add.rectangle(sx, sy, CELL*0.92, 10, 0xffffff, 1));
@@ -408,18 +447,22 @@ class MainScene extends Phaser.Scene {
     this.finishZone = this.add.zone(fx, fy, CELL*0.92, CELL*0.92);
     this.physics.add.existing(this.finishZone, true);
 
-    // jednoduché prekážky
+    // prekážky len na '#'
     const landCells = [];
     for (let y=0; y<rows; y++){
       for (let x=0; x<cols; x++){
         const ch = grid[y][x];
-        if (ch === "#" && !(x === s.x && y === s.y) && !(x === f.x && y === f.y)) landCells.push({x,y});
+        if (ch === "#") landCells.push({x,y});
       }
     }
     Phaser.Utils.Array.Shuffle(landCells);
     const obsCount = Math.min(10, Math.floor(landCells.length * 0.08));
     for (let i=0; i<obsCount; i++){
       const c = landCells[i];
+      // nenechaj prekážku na start/finish
+      if (c.x === startCell.x && c.y === startCell.y) continue;
+      if (c.x === finishCell.x && c.y === finishCell.y) continue;
+
       const ox = c.x*CELL + CELL/2;
       const oy = c.y*CELL + CELL/2;
       const r = this.add.rectangle(ox, oy, 70, 30, 0xffb020, 1);
@@ -428,18 +471,21 @@ class MainScene extends Phaser.Scene {
       this.obstacles.add(r);
     }
 
-    // car
+    // auto
     const baseW = 34, baseH = 54;
     const wMul = this.selectedCar.widthMul || 1;
     const hMul = this.selectedCar.heightMul || 1;
 
-    this.car = this.physics.add.image(sx, sy + CELL*0.35, "tex_car");
+    this.car = this.physics.add.image(sx, sy, "tex_car");
     this.car.setTint(this.selectedCar.color);
     this.car.setDisplaySize(baseW*wMul, baseH*hMul);
     this.car.body.setSize(baseW*wMul, baseH*hMul, true);
-    this.car.setDrag(280, 280);
+    this.car.setDrag(320, 320);
     this.car.setCollideWorldBounds(true);
     this.car.body.setMaxVelocity(this.selectedCar.maxSpeed, this.selectedCar.maxSpeed);
+
+    // žiadne "zvyškové" točenie
+    this.car.body.setAngularVelocity(0);
 
     this.physics.add.collider(this.car, this.wallGroup, ()=>this.onCrash(), null, this);
     this.physics.add.collider(this.car, this.obstacles, ()=>this.onCrash(), null, this);
@@ -452,9 +498,12 @@ class MainScene extends Phaser.Scene {
 
   startGame(){
     this.money = 0;
+
+    // reset volant
     this.steer = 0;
     this.wheel.active = false;
     this.wheel.id = null;
+    this.wheelKnob.setPosition(this.wheel.cx, this.wheel.cy - (this.wheel.r-16));
 
     this.buildWorld(this.selectedMap);
 
@@ -470,7 +519,6 @@ class MainScene extends Phaser.Scene {
 
   onFinish(){
     if (this.state !== "playing") return;
-
     this.money += RULES.finishReward;
     this.best = Math.max(this.best, this.money);
 
@@ -488,19 +536,29 @@ class MainScene extends Phaser.Scene {
     this.uiMoney.setText(`Peníze: ${this.money}`);
     if (this.state !== "playing") return;
 
-    // vstupy
-    const gas  = this.touch.gas || this.cursors.up.isDown;
+    const gas = this.touch.gas || this.cursors.up.isDown;
 
     // keyboard steer fallback
     let kbSteer = 0;
     if (this.cursors.left.isDown) kbSteer -= 1;
     if (this.cursors.right.isDown) kbSteer += 1;
 
-    const steer = clamp(this.steer + kbSteer, -1, 1);
+    let steer = clamp(this.steer + kbSteer, -1, 1);
 
-    // zatáčanie
-    const turnSpeed = 220; // deg/s (Arcade angular velocity is deg/s)
-    this.car.body.setAngularVelocity(steer * turnSpeed);
+    // ak volant neťaháš ani nedržíš klávesy, steer sa jemne vracia do 0 (stabilita)
+    if (!this.wheel.active && kbSteer === 0){
+      this.steer = Phaser.Math.Linear(this.steer, 0, 0.12);
+      steer = this.steer;
+    }
+
+    // rýchlosť auta (0..1)
+    const speed = this.car.body.speed || 0;
+    const speedN = clamp(speed / (this.selectedCar.maxSpeed || 240), 0, 1);
+
+    // zatáčanie závisí od rýchlosti (na mieste sa netočí)
+    const turnSpeed = 260; // deg/s pri plnej rýchlosti
+    const angVel = steer * turnSpeed * speedN;
+    this.car.body.setAngularVelocity(angVel);
 
     if (gas){
       const angleDeg = (this.car.rotation * 180/Math.PI) - 90;
