@@ -135,11 +135,11 @@ class MainScene extends Phaser.Scene {
       const x = 78 + i * 118;
       const y = 205;
       const card = this.add.container(x, y);
-      const bg = this.add.rectangle(0,0, 94, 118, 0x102030, 1).setStrokeStyle(2, 0x254765, 1).setInteractive();
+      const bg = this.add.rectangle(0,0, 88, 110, 0x102030, 1).setStrokeStyle(2, 0x254765, 1).setInteractive({ useHandCursor:true });
       const imgKey = car.id === 'taxi' ? 'car_taxi' : car.id === 'moto' ? 'car_moto' : 'car_auto';
-      const icon = this.add.image(0, -15, imgKey).setScale(0.58);
-      const name = this.add.text(0, 42, car.name, { fontSize:'13px', color:'#ffffff' }).setOrigin(0.5);
-      const stat = this.add.text(0, 60, `max ${car.maxSpeed}`, { fontSize:'11px', color:'#b8d9ff' }).setOrigin(0.5);
+      const icon = this.add.image(0, -16, imgKey).setScale(0.48);
+      const name = this.add.text(0, 36, car.name, { fontSize:'13px', color:'#ffffff' }).setOrigin(0.5);
+      const stat = this.add.text(0, 54, `max ${car.maxSpeed}`, { fontSize:'11px', color:'#b8d9ff' }).setOrigin(0.5);
       bg.on('pointerdown', ()=>{
         this.carIndex = i;
         this.selectedCar = CARS[i];
@@ -188,7 +188,7 @@ class MainScene extends Phaser.Scene {
     this.selectionText = this.add.text(w/2, 598, '', { fontSize:'13px', color:'#ffffff', align:'center' }).setOrigin(0.5);
 
     this.btnStart = this.add.rectangle(w/2, 662, 220, 56, 0x2bdc4a, 1).setInteractive({ useHandCursor:true });
-    this.btnStartTxt = this.add.text(w/2, 662, 'ŠTART', { fontSize:'22px', color:'#0c180e', fontStyle:'bold' }).setOrigin(0.5);
+    this.btnStartTxt = this.add.text(w/2, 662, 'ŠTART', { fontSize:'22px', color:'#0c180e', fontStyle:'bold' }).setOrigin(0.5).setInteractive({ useHandCursor:true });
 
     this.europeHit.on('pointerdown', ()=>{
       this.menuState = 'europe';
@@ -207,6 +207,7 @@ class MainScene extends Phaser.Scene {
       this.refreshMenuSelection();
     });
     this.btnStart.on('pointerdown', ()=> this.startGame());
+    this.btnStartTxt.on('pointerdown', ()=> this.startGame());
 
     this.menuRoot.add([
       panel, subtitle, carsLabel, mapsLabel,
@@ -218,8 +219,8 @@ class MainScene extends Phaser.Scene {
   refreshMenuSelection(){
     this.carCards.forEach((entry, idx)=>{
       const selected = idx === this.carIndex;
-      entry.bg.setFillStyle(selected ? 0x173a54 : 0x102030, 1);
-      entry.bg.setStrokeStyle( selected ? 3 : 2, selected ? 0x8fd3ff : 0x254765, 1 );
+      entry.bg.setFillStyle(selected ? 0x2e7ed3 : 0x102030, 1);
+      entry.bg.setStrokeStyle( selected ? 3 : 2, selected ? 0xb6dbff : 0x254765, 1 );
     });
     const mapName = this.selectedMap ? this.selectedMap.name : '—';
     this.selectionText.setText(`Auto: ${this.selectedCar.name}   •   Mapa: ${mapName}`);
@@ -240,7 +241,7 @@ class MainScene extends Phaser.Scene {
       this.uiTitle.setText('Soferujeme 4');
     } else {
       this.uiTitle.setText('Soferujeme 4');
-      this.uiInfo.setText('Pred jazdou môžeš mapu posúvať a približovať. Po prvej akcii sa kamera chytí auta.');
+      this.uiInfo.setText('');
     }
   }
 
@@ -510,6 +511,7 @@ class MainScene extends Phaser.Scene {
   }
 
   startGame(){
+    this.mapHint.setText(this.menuState === 'europe' ? 'V Európe je zatiaľ odomknuté iba Slovinsko' : 'Klikni na Európu a potom na Slovinsko');
     this.money = 0;
     this.touch.gas = false;
     this.releaseWheel();
@@ -517,7 +519,7 @@ class MainScene extends Phaser.Scene {
     this.gameStartedDriving = false;
     this.buildWorld(this.selectedMap);
     this.setState('playing');
-    this.uiInfo.setText('Mapu môžeš ťahať jedným prstom a zoomovať dvoma. Kamera sa prichytí auta až pri jazde.');
+    this.uiInfo.setText('');
   }
 
   engageCarCamera(){
@@ -552,17 +554,28 @@ class MainScene extends Phaser.Scene {
     const ctx = this.sound.context;
     if (!ctx) return;
     const now = ctx.currentTime;
-    [523.25, 659.25, 783.99].forEach((freq, i)=>{
+    const notes = [523.25, 659.25, 783.99, 880.0, 783.99, 659.25, 698.46, 783.99, 1046.5];
+    notes.forEach((freq, i)=>{
+      const t = now + i * 0.28;
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(freq, now + i * 0.12);
-      gain.gain.setValueAtTime(0.0001, now + i * 0.12);
-      gain.gain.exponentialRampToValueAtTime(0.08, now + i * 0.12 + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + i * 0.12 + 0.18);
+      const wobble = ctx.createOscillator();
+      const wobbleGain = ctx.createGain();
+      osc.type = i % 3 === 0 ? 'triangle' : 'sine';
+      osc.frequency.setValueAtTime(freq, t);
+      wobble.type = 'sine';
+      wobble.frequency.setValueAtTime(5.5, t);
+      wobbleGain.gain.setValueAtTime(8, t);
+      wobble.connect(wobbleGain).connect(osc.frequency);
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(0.095, t + 0.05);
+      gain.gain.exponentialRampToValueAtTime(0.05, t + 0.18);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.34);
       osc.connect(gain).connect(ctx.destination);
-      osc.start(now + i * 0.12);
-      osc.stop(now + i * 0.12 + 0.2);
+      osc.start(t);
+      wobble.start(t);
+      osc.stop(t + 0.36);
+      wobble.stop(t + 0.36);
     });
   }
 
@@ -573,13 +586,18 @@ class MainScene extends Phaser.Scene {
     this.best = Math.max(this.best, this.money);
     this.uiInfo.setText(`🏁 Cieľ! Peníze: ${this.money} • Best: ${this.best}`);
     this.cameras.main.stopFollow();
-    this.time.delayedCall(650, ()=>{
-      this.clearWorld();
+    if (this.car?.body){
+      this.car.body.setVelocity(0, 0);
+      this.car.body.setAngularVelocity(0);
+    }
+    this.touch.gas = false;
+    this.releaseWheel();
+    this.manualCamera = true;
+    this.gameStartedDriving = false;
+    this.time.delayedCall(180, ()=>{
       this.setState('menu');
       this.refreshMenuSelection();
-      this.cameras.main.setZoom(1);
-      this.cameras.main.scrollX = 0;
-      this.cameras.main.scrollY = 0;
+      this.mapHint.setText('Hotovo! Môžeš zvoliť auto/mapu alebo stlačiť ŠTART znova');
     });
   }
 
@@ -669,13 +687,25 @@ class MainScene extends Phaser.Scene {
     if (this.textures.exists(key)) return;
     const g = this.add.graphics();
     g.fillStyle(0x2e7ed3, 1).fillRoundedRect(0, 0, w, h, 18);
-    g.fillStyle(0x67ba61, 1);
-    g.fillEllipse(54, 74, 74, 48);   // Amerika
-    g.fillEllipse(140, 64, 52, 40);  // Európa
-    g.fillEllipse(156, 96, 62, 56);  // Afrika
-    g.fillEllipse(219, 76, 96, 52);  // Ázia
-    g.fillEllipse(246, 118, 44, 26); // Austrália
-    g.lineStyle(3, 0x8fff96, 1).strokeEllipse(140, 64, 58, 44);
+    const poly = (pts, fill)=>{
+      g.fillStyle(fill, 1);
+      g.beginPath();
+      g.moveTo(pts[0][0], pts[0][1]);
+      for (let i = 1; i < pts.length; i++) g.lineTo(pts[i][0], pts[i][1]);
+      g.closePath();
+      g.fillPath();
+      g.lineStyle(1, 0xeaffef, 0.35).strokePath();
+    };
+    poly([[22,46],[35,30],[46,26],[54,36],[51,52],[44,64],[38,82],[31,102],[24,112],[18,98],[18,78]], 0x67ba61);
+    poly([[56,100],[66,90],[76,96],[78,114],[72,130],[62,138],[56,124]], 0x67ba61);
+    poly([[128,38],[138,34],[147,40],[148,50],[140,56],[132,52]], 0x67ba61);
+    poly([[134,58],[148,58],[156,72],[154,90],[148,110],[138,126],[128,118],[126,96],[128,76]], 0x67ba61);
+    poly([[154,40],[176,30],[212,34],[244,48],[260,64],[254,82],[236,92],[206,88],[194,100],[174,96],[160,78],[152,62]], 0x67ba61);
+    poly([[232,112],[246,108],[258,116],[260,130],[248,136],[236,128]], 0x67ba61);
+    g.lineStyle(3, 0x8fff96, 1);
+    g.beginPath();
+    g.moveTo(124,34); g.lineTo(141,30); g.lineTo(153,39); g.lineTo(151,55); g.lineTo(138,59); g.lineTo(126,52); g.closePath();
+    g.strokePath();
     g.generateTexture(key, w, h);
     g.destroy();
   }
@@ -685,26 +715,26 @@ class MainScene extends Phaser.Scene {
     const g = this.add.graphics();
     g.fillStyle(0x2e7ed3, 1).fillRoundedRect(0, 0, w, h, 18);
 
-    const countries = [
-      { c:0x5fb95a, pts:[-110,-40,-78,-56,-66,-32,-88,-12,-116,-16] }, // Spain
-      { c:0x68c064, pts:[-66,-24,-26,-48,4,-30,-24,2,-72,0] },          // France
-      { c:0x74c96d, pts:[8,-58,34,-54,44,-24,20,-6,0,-18] },            // Germany
-      { c:0x66be61, pts:[24,8,56,6,68,28,42,48,16,30] },                 // Austria/Hungary zone
-      { c:0x6ec66a, pts:[-18,18,20,10,30,50,-4,62,-24,40] },             // Italy/Balkans west
-      { c:0x80d879, pts:[34,28,58,24,64,42,42,48,28,40] },               // Slovenia highlighted area zone
-      { c:0x73c76f, pts:[64,-6,108,-16,126,16,98,36,66,24] },            // Romania/Ukraine zone
-      { c:0x79cf72, pts:[-16,-84,20,-78,26,-56,6,-50,-12,-62] }          // Scandinavia
-    ];
-    countries.forEach(ct=>{
-      g.fillStyle(ct.c, 1);
+    const poly = (pts, fill)=>{
+      g.fillStyle(fill, 1);
       g.beginPath();
-      g.moveTo(w/2 + ct.pts[0], h/2 + ct.pts[1]);
-      for (let i=2; i<ct.pts.length; i+=2) g.lineTo(w/2 + ct.pts[i], h/2 + ct.pts[i+1]);
+      g.moveTo(pts[0][0], pts[0][1]);
+      for (let i = 1; i < pts.length; i++) g.lineTo(pts[i][0], pts[i][1]);
       g.closePath();
       g.fillPath();
-      g.lineStyle(1, 0xe9fff0, 0.35).strokePath();
-    });
-    g.lineStyle(2, 0xfff18c, 1).strokeRoundedRect(w/2 + 24, h/2 + 14, 44, 28, 5);
+      g.lineStyle(1, 0xe9fff0, 0.34).strokePath();
+    };
+
+    poly([[30,102],[46,86],[64,80],[76,88],[70,104],[52,114],[36,112]], 0x5fb95a);
+    poly([[64,84],[86,70],[116,68],[132,74],[134,90],[116,102],[86,100],[72,94]], 0x67c164);
+    poly([[116,66],[136,56],[152,62],[154,82],[138,94],[122,88]], 0x72ca6d);
+    poly([[124,96],[148,92],[168,102],[170,118],[152,130],[132,120]], 0x6bc566);
+    poly([[104,102],[122,108],[128,146],[116,150],[98,122]], 0x62bb5d);
+    poly([[148,102],[170,100],[184,108],[182,120],[166,126],[150,118]], 0x80d879);
+    poly([[156,62],[188,54],[220,64],[234,82],[226,104],[198,106],[176,94],[162,82]], 0x73c76f);
+    poly([[110,28],[126,18],[150,18],[160,34],[150,44],[128,42]], 0x79cf72);
+    poly([[142,138],[156,136],[166,146],[164,160],[150,162],[142,152]], 0x69bf63);
+    g.lineStyle(2, 0xfff18c, 1).strokeRoundedRect(147, 99, 34, 24, 5);
     g.generateTexture(key, w, h);
     g.destroy();
   }
