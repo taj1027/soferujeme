@@ -129,19 +129,19 @@ class MainScene extends Phaser.Scene {
       .setStrokeStyle(2, 0x295b8f, 0.9);
     const subtitle = this.add.text(w/2, 58, '', { fontSize:'15px', color:'#b8d9ff' }).setOrigin(0.5,0).setVisible(false);
 
-    const carsLabel = this.add.text(w/2, 95, '', { fontSize:'13px', color:'#7fb3ff', fontStyle:'bold' }).setOrigin(0.5,0).setVisible(false);
-    const mapsLabel = this.add.text(w/2, 330, '', { fontSize:'13px', color:'#7fb3ff', fontStyle:'bold' }).setOrigin(0.5,0).setVisible(false);
+    const carsLabel = this.add.text(w/2, 95, 'AUTÁ', { fontSize:'13px', color:'#7fb3ff', fontStyle:'bold' }).setOrigin(0.5,0);
+    const mapsLabel = this.add.text(w/2, 330, 'MAPY', { fontSize:'13px', color:'#7fb3ff', fontStyle:'bold' }).setOrigin(0.5,0);
 
     this.carCards = [];
     CARS.forEach((car, i)=>{
       const x = 78 + i * 118;
       const y = 205;
       const card = this.add.container(x, y);
-      const bg = this.add.rectangle(0,0, 88, 110, 0x7db8ef, 1).setStrokeStyle(2, 0xbfdfff, 1).setInteractive({ useHandCursor:true });
+      const bg = this.add.rectangle(0,0, 88, 110, 0x2e7ed3, 1).setStrokeStyle(2, 0xbfdfff, 1).setInteractive({ useHandCursor:true });
       const imgKey = car.id === 'taxi' ? 'car_taxi' : car.id === 'moto' ? 'car_moto' : 'car_auto';
       const icon = this.add.image(0, -16, imgKey).setScale(0.48);
-      const name = this.add.text(0, 36, car.name, { fontSize:'13px', color:'#08345f', fontStyle:'bold' }).setOrigin(0.5);
-      const stat = this.add.text(0, 54, `max ${car.maxSpeed}`, { fontSize:'11px', color:'#0d4f8c' }).setOrigin(0.5);
+      const name = this.add.text(0, 36, car.name, { fontSize:'13px', color:'#ffffff', fontStyle:'bold' }).setOrigin(0.5);
+      const stat = this.add.text(0, 54, `max ${car.maxSpeed}`, { fontSize:'11px', color:'#d7ebff' }).setOrigin(0.5);
       bg.on('pointerdown', ()=>{
         this.carIndex = i;
         this.selectedCar = CARS[i];
@@ -191,7 +191,7 @@ class MainScene extends Phaser.Scene {
     this.selectionText = this.add.text(w/2, 574, '', { fontSize:'13px', color:'#ffffff', align:'center' }).setOrigin(0.5);
 
     this.btnStart = this.add.rectangle(w/2, 636, 220, 56, 0x2bdc4a, 1).setInteractive({ useHandCursor:true });
-    this.btnStartTxt = this.add.text(w/2, 636, 'ŠTART', { fontSize:'22px', color:'#0c180e', fontStyle:'bold' }).setOrigin(0.5).setInteractive({ useHandCursor:true });
+    this.btnStartTxt = this.add.text(w/2, 636, 'ŠTART', { fontSize:'22px', color:'#0c180e', fontStyle:'bold' }).setOrigin(0.5);
 
     this.europeHit.on('pointerdown', ()=>{
       this.menuState = 'europe';
@@ -210,7 +210,6 @@ class MainScene extends Phaser.Scene {
       this.refreshMenuSelection();
     });
     this.btnStart.on('pointerdown', ()=> this.startGame());
-    this.btnStartTxt.on('pointerdown', ()=> this.startGame());
 
     this.menuRoot.add([
       panel, subtitle, carsLabel, mapsLabel,
@@ -222,7 +221,7 @@ class MainScene extends Phaser.Scene {
   refreshMenuSelection(){
     this.carCards.forEach((entry, idx)=>{
       const selected = idx === this.carIndex;
-      entry.bg.setFillStyle(selected ? 0x5f9fe6 : 0x7db8ef, 1);
+      entry.bg.setFillStyle(selected ? 0x5f9fe6 : 0x2e7ed3, 1);
       entry.bg.setStrokeStyle( selected ? 3 : 2, selected ? 0xeaf5ff : 0xbfdfff, 1 );
     });
     const mapName = this.selectedMap ? this.selectedMap.name : '—';
@@ -235,15 +234,21 @@ class MainScene extends Phaser.Scene {
     const isPlaying = state === 'playing';
 
     this.menuRoot.setVisible(isMenu);
+    this.menuRoot.setActive(isMenu);
 
-    const setMenuInteractive = (obj, enabled)=>{
+    const enableObj = (obj)=>{
       if (!obj) return;
-      if (enabled) obj.setInteractive({ useHandCursor:true });
-      else if (obj.disableInteractive) obj.disableInteractive();
+      if (obj.input) obj.input.enabled = true;
+      else if (obj.setInteractive) obj.setInteractive({ useHandCursor:true });
+    };
+    const disableObj = (obj)=>{
+      if (!obj) return;
+      if (obj.disableInteractive) obj.disableInteractive();
+      if (obj.input) obj.input.enabled = false;
     };
 
-    [this.btnStart, this.btnStartTxt, this.europeHit, this.backToWorld, this.sloveniaHit].forEach(obj=> setMenuInteractive(obj, isMenu));
-    this.carCards.forEach(entry => setMenuInteractive(entry.bg, isMenu));
+    const menuItems = [this.btnStart, this.europeHit, this.backToWorld, this.sloveniaHit, ...this.carCards.map(entry => entry.bg)];
+    menuItems.forEach(obj => isMenu ? enableObj(obj) : disableObj(obj));
 
     [this.gasBtn, this.gasInner, this.gasTxt, this.wheelBase, this.wheelRing, this.wheelKnob, this.uiMoney, this.uiInfo, this.uiTitle].forEach(o=>o.setVisible(isPlaying));
 
@@ -518,6 +523,9 @@ class MainScene extends Phaser.Scene {
   }
 
   startGame(){
+    if (this.state === 'starting') return;
+    this.state = 'starting';
+
     try {
       this.money = 0;
       this.touch.gas = false;
@@ -528,15 +536,17 @@ class MainScene extends Phaser.Scene {
       this.mapBrowse.active = false;
       this.mapBrowse.pointerId = null;
       this.mapBrowse.pinch = false;
+
       this.clearWorld();
-      this.setState('playing');
       this.buildWorld(this.selectedMap || MAPS.si);
+
+      this.setState('playing');
       this.uiInfo.setText('');
       this.input.setDefaultCursor('default');
     } catch (err) {
       console.error('startGame failed', err);
       this.setState('menu');
-      this.uiInfo.setText('');
+      this.uiInfo.setText('Hra sa nepodarilo spustiť');
     }
   }
 
