@@ -92,7 +92,8 @@ class MainScene extends Phaser.Scene {
   }
 
   buildHud(){
-    this.uiTitle = this.add.text(VIEW_W/2, 16, 'Soferujeme 4', { fontSize:'20px', color:'#ffffff', fontStyle:'bold' })
+    document.title = 'Šoférujeme 4';
+    this.uiTitle = this.add.text(VIEW_W/2, 16, 'Šoférujeme 4', { fontSize:'20px', color:'#ffffff', fontStyle:'bold' })
       .setOrigin(0.5, 0).setScrollFactor(0).setDepth(2000);
 
     this.uiMoney = this.add.text(12, 48, 'Peníze: 0', { fontSize:'16px', color:'#ffffff' })
@@ -126,17 +127,17 @@ class MainScene extends Phaser.Scene {
 
     const panel = this.add.rectangle(w/2, VIEW_H/2, w - 26, VIEW_H - 120, 0x07121d, 0.88)
       .setStrokeStyle(2, 0x295b8f, 0.9);
-    const subtitle = this.add.text(w/2, 58, 'Vyber auto hore a mapu dole', { fontSize:'15px', color:'#b8d9ff' }).setOrigin(0.5,0);
+    const subtitle = this.add.text(w/2, 58, '', { fontSize:'15px', color:'#b8d9ff' }).setOrigin(0.5,0).setVisible(false);
 
-    const carsLabel = this.add.text(w/2, 95, 'AUTÁ', { fontSize:'13px', color:'#7fb3ff', fontStyle:'bold' }).setOrigin(0.5,0);
-    const mapsLabel = this.add.text(w/2, 330, 'MAPY', { fontSize:'13px', color:'#7fb3ff', fontStyle:'bold' }).setOrigin(0.5,0);
+    const carsLabel = this.add.text(w/2, 95, '', { fontSize:'13px', color:'#7fb3ff', fontStyle:'bold' }).setOrigin(0.5,0).setVisible(false);
+    const mapsLabel = this.add.text(w/2, 330, '', { fontSize:'13px', color:'#7fb3ff', fontStyle:'bold' }).setOrigin(0.5,0).setVisible(false);
 
     this.carCards = [];
     CARS.forEach((car, i)=>{
       const x = 78 + i * 118;
       const y = 205;
       const card = this.add.container(x, y);
-      const bg = this.add.rectangle(0,0, 88, 110, 0x5ea7ea, 1).setStrokeStyle(2, 0xbfdfff, 1).setInteractive({ useHandCursor:true });
+      const bg = this.add.rectangle(0,0, 88, 110, 0x7db8ef, 1).setStrokeStyle(2, 0xbfdfff, 1).setInteractive({ useHandCursor:true });
       const imgKey = car.id === 'taxi' ? 'car_taxi' : car.id === 'moto' ? 'car_moto' : 'car_auto';
       const icon = this.add.image(0, -16, imgKey).setScale(0.48);
       const name = this.add.text(0, 36, car.name, { fontSize:'13px', color:'#08345f', fontStyle:'bold' }).setOrigin(0.5);
@@ -186,23 +187,23 @@ class MainScene extends Phaser.Scene {
     this.menuState = 'world';
     this.europeWrap.setVisible(false);
 
-    this.mapHint = this.add.text(w/2, 563, 'Klikni na Európu a potom na Slovinsko', { fontSize:'12px', color:'#b8d9ff' }).setOrigin(0.5);
-    this.selectionText = this.add.text(w/2, 598, '', { fontSize:'13px', color:'#ffffff', align:'center' }).setOrigin(0.5);
+    this.mapHint = this.add.text(w/2, 563, '', { fontSize:'12px', color:'#b8d9ff' }).setOrigin(0.5).setVisible(false);
+    this.selectionText = this.add.text(w/2, 574, '', { fontSize:'13px', color:'#ffffff', align:'center' }).setOrigin(0.5);
 
-    this.btnStart = this.add.rectangle(w/2, 662, 220, 56, 0x2bdc4a, 1).setInteractive({ useHandCursor:true });
-    this.btnStartTxt = this.add.text(w/2, 662, 'ŠTART', { fontSize:'22px', color:'#0c180e', fontStyle:'bold' }).setOrigin(0.5).setInteractive({ useHandCursor:true });
+    this.btnStart = this.add.rectangle(w/2, 636, 220, 56, 0x2bdc4a, 1).setInteractive({ useHandCursor:true });
+    this.btnStartTxt = this.add.text(w/2, 636, 'ŠTART', { fontSize:'22px', color:'#0c180e', fontStyle:'bold' }).setOrigin(0.5).setInteractive({ useHandCursor:true });
 
     this.europeHit.on('pointerdown', ()=>{
       this.menuState = 'europe';
       this.worldMapWrap.setVisible(false);
       this.europeWrap.setVisible(true);
-      this.mapHint.setText('V Európe je zatiaľ odomknuté iba Slovinsko');
+
     });
     this.backToWorld.on('pointerdown', ()=>{
       this.menuState = 'world';
       this.worldMapWrap.setVisible(true);
       this.europeWrap.setVisible(false);
-      this.mapHint.setText('Klikni na Európu a potom na Slovinsko');
+
     });
     this.sloveniaHit.on('pointerdown', ()=>{
       this.selectedMap = MAPS.si;
@@ -221,7 +222,7 @@ class MainScene extends Phaser.Scene {
   refreshMenuSelection(){
     this.carCards.forEach((entry, idx)=>{
       const selected = idx === this.carIndex;
-      entry.bg.setFillStyle(selected ? 0x2e7ed3 : 0x5ea7ea, 1);
+      entry.bg.setFillStyle(selected ? 0x5f9fe6 : 0x7db8ef, 1);
       entry.bg.setStrokeStyle( selected ? 3 : 2, selected ? 0xeaf5ff : 0xbfdfff, 1 );
     });
     const mapName = this.selectedMap ? this.selectedMap.name : '—';
@@ -234,25 +235,20 @@ class MainScene extends Phaser.Scene {
     const isPlaying = state === 'playing';
 
     this.menuRoot.setVisible(isMenu);
-    this.menuRoot.iterate(obj => {
-      if (!obj || !obj.input) return;
-      if (isMenu) obj.setInteractive(obj.input.hitArea ? { useHandCursor:true } : undefined);
-      else obj.disableInteractive();
-    });
-    [this.btnStart, this.btnStartTxt, this.europeHit, this.backToWorld, this.sloveniaHit].forEach(obj=>{
-      if (!obj) return;
-      if (isMenu) obj.setInteractive({ useHandCursor:true });
-      else obj.disableInteractive();
-    });
-    this.carCards.forEach(entry=>{
-      if (isMenu) entry.bg.setInteractive({ useHandCursor:true });
-      else entry.bg.disableInteractive();
-    });
 
-    [this.gasBtn, this.gasInner, this.gasTxt, this.wheelBase, this.wheelRing, this.wheelKnob, this.uiMoney, this.uiInfo].forEach(o=>o.setVisible(isPlaying));
+    const setMenuInteractive = (obj, enabled)=>{
+      if (!obj) return;
+      if (enabled) obj.setInteractive({ useHandCursor:true });
+      else if (obj.disableInteractive) obj.disableInteractive();
+    };
+
+    [this.btnStart, this.btnStartTxt, this.europeHit, this.backToWorld, this.sloveniaHit].forEach(obj=> setMenuInteractive(obj, isMenu));
+    this.carCards.forEach(entry => setMenuInteractive(entry.bg, isMenu));
+
+    [this.gasBtn, this.gasInner, this.gasTxt, this.wheelBase, this.wheelRing, this.wheelKnob, this.uiMoney, this.uiInfo, this.uiTitle].forEach(o=>o.setVisible(isPlaying));
 
     this.uiMoney.setText(`Peníze: ${this.money}`);
-    this.uiTitle.setText('Soferujeme 4');
+    this.uiTitle.setText('Šoférujeme 4');
     if (!isPlaying) this.uiInfo.setText('');
   }
 
@@ -522,18 +518,26 @@ class MainScene extends Phaser.Scene {
   }
 
   startGame(){
-    this.mapHint.setText(this.menuState === 'europe' ? 'V Európe je zatiaľ odomknuté iba Slovinsko' : 'Klikni na Európu a potom na Slovinsko');
-    this.money = 0;
-    this.touch.gas = false;
-    this.releaseWheel();
-    this.manualCamera = true;
-    this.gameStartedDriving = false;
-    this.clearWorld();
-    this.finishedRound = false;
-    this.buildWorld(this.selectedMap);
-    this.setState('playing');
-    this.uiInfo.setText('');
-    this.input.setDefaultCursor('default');
+    try {
+      this.money = 0;
+      this.touch.gas = false;
+      this.releaseWheel();
+      this.manualCamera = true;
+      this.gameStartedDriving = false;
+      this.finishedRound = false;
+      this.mapBrowse.active = false;
+      this.mapBrowse.pointerId = null;
+      this.mapBrowse.pinch = false;
+      this.clearWorld();
+      this.setState('playing');
+      this.buildWorld(this.selectedMap || MAPS.si);
+      this.uiInfo.setText('');
+      this.input.setDefaultCursor('default');
+    } catch (err) {
+      console.error('startGame failed', err);
+      this.setState('menu');
+      this.uiInfo.setText('');
+    }
   }
 
   engageCarCamera(){
@@ -605,7 +609,6 @@ class MainScene extends Phaser.Scene {
     this.gameStartedDriving = false;
     this.setState('menu');
     this.refreshMenuSelection();
-    this.mapHint.setText('Hotovo! Auto ostalo v cieli. Môžeš zmeniť auto alebo stlačiť ŠTART znova');
   }
 
   update(){
