@@ -140,7 +140,7 @@ class MainScene extends Phaser.Scene {
       const x = 78 + i * 118;
       const y = 205;
       const card = this.add.container(x, y);
-      const bg = this.add.rectangle(0,0, 88, 110, 0x2e7ed3, 1).setStrokeStyle(2, 0xbfdfff, 1).setInteractive({ useHandCursor:true });
+      const bg = this.add.rectangle(0,0, 88, 110, 0x3f86d9, 1).setStrokeStyle(2, 0xbfdfff, 1).setInteractive({ useHandCursor:true });
       bg.setData('menuButton', true);
       const imgKey = car.id === 'taxi' ? 'car_taxi' : car.id === 'moto' ? 'car_moto' : 'car_auto';
       const icon = this.add.image(0, -16, imgKey).setScale(0.48);
@@ -200,7 +200,8 @@ class MainScene extends Phaser.Scene {
 
     this.btnStart = this.add.rectangle(w/2, 636, 220, 56, 0x2bdc4a, 1).setInteractive({ useHandCursor:true });
     this.btnStart.setData('menuButton', true);
-    this.btnStartTxt = this.add.text(w/2, 636, 'ŠTART', { fontSize:'22px', color:'#0c180e', fontStyle:'bold' }).setOrigin(0.5);
+    this.btnStartTxt = this.add.text(w/2, 636, 'ŠTART', { fontSize:'22px', color:'#0c180e', fontStyle:'bold' }).setOrigin(0.5).setInteractive({ useHandCursor:true });
+    this.btnStartTxt.setData('menuButton', true);
 
     this.europeHit.on('pointerdown', ()=>{
       this.menuState = 'europe';
@@ -218,10 +219,12 @@ class MainScene extends Phaser.Scene {
       this.selectedMap = MAPS.si;
       this.refreshMenuSelection();
     });
-    this.btnStart.on('pointerup', (pointer)=> {
+    const startHandler = (pointer)=> {
       if (pointer && pointer.event && pointer.event.stopPropagation) pointer.event.stopPropagation();
       this.safeStartFromMenu();
-    });
+    };
+    this.btnStart.on('pointerdown', startHandler);
+    this.btnStartTxt.on('pointerdown', startHandler);
 
     this.menuRoot.add([
       panel, subtitle, carsLabel, mapsLabel,
@@ -233,7 +236,7 @@ class MainScene extends Phaser.Scene {
   refreshMenuSelection(){
     this.carCards.forEach((entry, idx)=>{
       const selected = idx === this.carIndex;
-      entry.bg.setFillStyle(0x2e7ed3, 1);
+      entry.bg.setFillStyle(0x3f86d9, 1);
       entry.bg.setStrokeStyle(selected ? 4 : 2, selected ? 0xeaf5ff : 0xbfdfff, 1);
       entry.card.setScale(selected ? 1.03 : 1);
     });
@@ -258,7 +261,7 @@ class MainScene extends Phaser.Scene {
   }
 
   setMenuInteractive(enabled){
-    const menuItems = [this.btnStart, this.europeHit, this.backToWorld, this.sloveniaHit, ...this.carCards.map(entry => entry.bg)];
+    const menuItems = [this.btnStart, this.btnStartTxt, this.europeHit, this.backToWorld, this.sloveniaHit, ...this.carCards.map(entry => entry.bg)];
     menuItems.forEach(obj => {
       if (!obj) return;
       if (enabled){
@@ -459,7 +462,15 @@ class MainScene extends Phaser.Scene {
     this.setMenuInteractive(false);
     this.uiInfo.setText('Spúšťam hru…');
     if (this.menuDebugText) this.menuDebugText.setText('Spúšťam hru…');
-    this.time.delayedCall(30, ()=> this.startGame());
+    try {
+      this.startGame();
+    } catch (err) {
+      console.error('safeStartFromMenu outer fail', err);
+      this.startingNow = false;
+      this.setState('menu');
+      this.setMenuInteractive(true);
+      if (this.menuDebugText) this.menuDebugText.setText(`Chyba: ${err?.message || 'štart sa nespustil'}`);
+    }
   }
 
   buildWorld(mapDef){
@@ -471,8 +482,9 @@ class MainScene extends Phaser.Scene {
     this.worldH = rows * CELL;
     this.physics.world.setBounds(0, 0, this.worldW, this.worldH);
 
+    this.grid = grid;
     this.landLayer = this.add.container(0,0);
-    this.wallGroup = this.physics.add.staticGroup();
+    this.wallGroup = null;
     this.obstacles = this.physics.add.staticGroup();
 
     for (let y = 0; y < rows; y++){
@@ -482,11 +494,6 @@ class MainScene extends Phaser.Scene {
         const isLand = this.isLandChar(grid[y][x]);
         const img = this.add.image(cx, cy, isLand ? 'tex_land' : 'tex_ocean');
         this.landLayer.add(img);
-        if (!isLand){
-          const wall = this.add.rectangle(cx, cy, CELL, CELL, 0x000000, 0);
-          this.physics.add.existing(wall, true);
-          this.wallGroup.add(wall);
-        }
       }
     }
 
@@ -537,10 +544,10 @@ class MainScene extends Phaser.Scene {
     this.car.setCollideWorldBounds(true);
     this.car.body.setMaxVelocity(this.selectedCar.maxSpeed, this.selectedCar.maxSpeed);
     this.car.body.setAngularVelocity(0);
+    this.lastSafePos = { x: sx, y: sy };
+    this.crashCooldownUntil = 0;
 
-    this.physics.add.collider(this.car, this.wallGroup, ()=> this.onCrash(), null, this);
-    this.physics.add.collider(this.car, this.obstacles, ()=> this.onCrash(), null, this);
-    this.physics.add.overlap(this.car, this.finishZone, ()=> this.onFinish(), null, this);
+    this.physics.add.collider(this.car, this.obstacles, ()=> this.onCrash(true), null, this);
 
     const cam = this.cameras.main;
     cam.stopFollow();
@@ -622,10 +629,42 @@ class MainScene extends Phaser.Scene {
     cam.scrollY = clamp(cam.scrollY, 0, maxScrollY);
   }
 
-  onCrash(){
+  onCrash(resetToSafe = false){
     if (this.state !== 'playing') return;
+    const now = this.time.now || 0;
+    if (now < (this.crashCooldownUntil || 0)) return;
+    this.crashCooldownUntil = now + 350;
     this.money = Math.max(0, this.money - RULES.crashPenalty);
     this.uiInfo.setText(`💥 Náraz -${RULES.crashPenalty}`);
+    if (resetToSafe && this.car && this.lastSafePos){
+      this.car.setPosition(this.lastSafePos.x, this.lastSafePos.y);
+      if (this.car.body){
+        this.car.body.setVelocity(0, 0);
+        this.car.body.setAngularVelocity(0);
+      }
+    }
+  }
+
+  isDriveableAt(x, y){
+    if (!this.grid) return true;
+    const gx = Math.floor(x / CELL);
+    const gy = Math.floor(y / CELL);
+    const row = this.grid[gy];
+    if (!row) return false;
+    return this.isLandChar(row[gx]);
+  }
+
+  handleTerrainAndFinish(){
+    if (!this.car || !this.grid) return;
+    if (this.isDriveableAt(this.car.x, this.car.y)){
+      this.lastSafePos = { x: this.car.x, y: this.car.y };
+    } else {
+      this.onCrash(true);
+      return;
+    }
+    if (this.finishZone && Phaser.Geom.Rectangle.Contains(this.finishZone.getBounds(), this.car.x, this.car.y)){
+      this.onFinish();
+    }
   }
 
   playWinSound(){
@@ -706,6 +745,7 @@ class MainScene extends Phaser.Scene {
       this.car.body.velocity.y = Phaser.Math.Linear(this.car.body.velocity.y, v.y, a);
     }
 
+    this.handleTerrainAndFinish();
     if (this.manualCamera) this.clampCameraToWorld();
   }
 
@@ -768,7 +808,7 @@ class MainScene extends Phaser.Scene {
   makeAtlasWorldTexture(key, w, h){
     if (this.textures.exists(key)) return;
     const g = this.add.graphics();
-    g.fillStyle(0x2e7ed3, 1).fillRoundedRect(0, 0, w, h, 18);
+    g.fillStyle(0x3f86d9, 1).fillRoundedRect(0, 0, w, h, 18);
     const poly = (pts, fill)=>{
       g.fillStyle(fill, 1);
       g.beginPath();
@@ -795,7 +835,7 @@ class MainScene extends Phaser.Scene {
   makeEuropeTexture(key, w, h){
     if (this.textures.exists(key)) return;
     const g = this.add.graphics();
-    g.fillStyle(0x2e7ed3, 1).fillRoundedRect(0, 0, w, h, 18);
+    g.fillStyle(0x3f86d9, 1).fillRoundedRect(0, 0, w, h, 18);
 
     const poly = (pts, fill)=>{
       g.fillStyle(fill, 1);
