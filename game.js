@@ -85,6 +85,11 @@ class MainScene extends Phaser.Scene {
     this.pinch = { active:false, ids:[], startDist:0, startZoom:1 };
     this.cameraDetached = false;
     this.starting = false;
+
+    this.audioReady = false;
+    this.audioCtx = null;
+    this.engineOsc = null;
+    this.engineGain = null;
   }
 
   create(){
@@ -115,8 +120,10 @@ class MainScene extends Phaser.Scene {
     this.uiTitle = this.add.text(VIEW_W/2, 18, 'Šoférujeme 4', { fontSize:'18px', fontStyle:'bold', color:COLORS.text }).setOrigin(0.5).setScrollFactor(0).setDepth(900);
     this.uiMoney = this.add.text(12, 46, 'Peníze: 0', { fontSize:'16px', color:COLORS.text }).setScrollFactor(0).setDepth(900);
     this.uiInfo = this.add.text(12, 68, '', { fontSize:'13px', color:'#d0e7ff' }).setScrollFactor(0).setDepth(900);
-    this.uiLightBox = this.add.rectangle(VIEW_W-44, 56, 56, 56, 0x0e0e0e).setScrollFactor(0).setDepth(900);
-    this.lightDot = this.add.circle(VIEW_W-44, 56, 16, 0x2bdc4a).setScrollFactor(0).setDepth(901);
+    this.btnBackMenu = this.add.text(VIEW_W-16, 52, '← menu', {
+      fontSize:'15px', color:'#d8ebff', backgroundColor:'#15334f', padding:{left:8,right:8,top:4,bottom:4}, fontStyle:'bold'
+    }).setOrigin(1,0.5).setInteractive({ useHandCursor:true }).setScrollFactor(0).setDepth(902);
+    this.btnBackMenu.on('pointerdown', ()=> this.returnToMenu());
   }
 
   buildControls(){
@@ -132,14 +139,17 @@ class MainScene extends Phaser.Scene {
 
     this.gasBtn.on('pointerdown', (p)=> {
       if (this.state !== 'playing') return;
+      this.ensureAudio();
       this.touch.gas = true;
       this.touch.gasId = p.id;
       this.resumeCameraFollow();
+      this.startEngineSound();
     });
     const releaseGas = (p)=>{
       if (!p || this.touch.gasId === null || p.id === this.touch.gasId){
         this.touch.gas = false;
         this.touch.gasId = null;
+        this.stopEngineSound();
       }
     };
     this.gasBtn.on('pointerup', releaseGas);
@@ -154,6 +164,7 @@ class MainScene extends Phaser.Scene {
         const dx = p.x - this.wheel.cx;
         const dy = p.y - this.wheel.cy;
         if (Math.hypot(dx,dy) <= this.wheel.r){
+          this.ensureAudio();
           this.wheel.active = true;
           this.wheel.id = p.id;
           this.resumeCameraFollow();
@@ -217,6 +228,7 @@ class MainScene extends Phaser.Scene {
       if (!p || this.touch.gasId === null || p.id === this.touch.gasId){
         this.touch.gas = false;
         this.touch.gasId = null;
+        this.stopEngineSound();
       }
 
       const active = this.input.manager.pointers.filter(pp => pp.isDown);
@@ -234,6 +246,7 @@ class MainScene extends Phaser.Scene {
       if (!p || this.touch.gasId === null || p.id === this.touch.gasId){
         this.touch.gas = false;
         this.touch.gasId = null;
+        this.stopEngineSound();
       }
     });
   }
@@ -280,10 +293,9 @@ class MainScene extends Phaser.Scene {
 
   updateWheelFromPointer(p){
     const dx = p.x - this.wheel.cx;
-    const dy = p.y - this.wheel.cy;
-    let deg = Phaser.Math.RadToDeg(Math.atan2(dx, -dy)); // top=0, right positive
-    this.wheelAngle = clamp(deg, -this.wheelMaxAngle, this.wheelMaxAngle);
-    this.steer = clamp(this.wheelAngle / this.wheelMaxAngle, -1, 1);
+    const usable = this.wheel.r * 0.78;
+    this.steer = clamp(dx / usable, -1, 1);
+    this.wheelAngle = this.steer * 115;
     this.renderWheelVisual();
   }
 
@@ -336,8 +348,11 @@ class MainScene extends Phaser.Scene {
     });
 
     add(this.add.text(w/2, 410, 'MAPY', { fontSize:'16px', fontStyle:'bold', color:COLORS.subtext }).setOrigin(0.5).setScrollFactor(0).setDepth(2001));
+    this.mapStageLink = add(this.add.text(w/2, 438, 'Svetadiely', { fontSize:'12px', color:'#cfe8ff', backgroundColor:'#15334f', padding:{left:8,right:8,top:3,bottom:3}, fontStyle:'bold' }).setOrigin(0.5).setScrollFactor(0).setDepth(2002).setInteractive({ useHandCursor:true }));
+    this.mapStageLink.on('pointerdown', ()=> { this.mapStage = 'continents'; this.refreshMenuVisuals(); });
 
     this.mapPanel = this.add.container(w/2, 525).setScrollFactor(0).setDepth(2002);
+    this.menuRoot.add(this.mapPanel);
     const panelBorder = this.add.rectangle(0, 0, 284, 164, 0x2E7ED3, 1).setStrokeStyle(2, COLORS.cardBorder, 0.95);
     this.mapPanel.add(panelBorder);
 
@@ -361,10 +376,7 @@ class MainScene extends Phaser.Scene {
     this.drawSloveniaOutline(slGlow, 22, 25, 0xfff0a0, 0xffd94d);
     const slHit = this.add.zone(23, 25, 54, 28).setInteractive({ useHandCursor:true });
     slHit.on('pointerdown', ()=> { this.selectedMap = MAPS.si; this.refreshMenuVisuals(); });
-    const backTag = this.add.text(-92, -56, '← svetadiely', {
-      fontSize:'11px', color:'#c6e6ff', backgroundColor:'#15334f', padding:{left:6,right:6,top:3,bottom:3}
-    }).setOrigin(0.5).setInteractive({ useHandCursor:true });
-    backTag.on('pointerdown', ()=> { this.mapStage = 'continents'; this.refreshMenuVisuals(); });
+    const backTag = this.add.text(-92, -56, '', { fontSize:'1px', color:'#000000' }).setOrigin(0.5);
     const locked2 = [];
     [
       { x:-90, y:-38, name:'Španielsko' }, { x:-34, y:-18, name:'Francúzsko' }, { x:16, y:-48, name:'Nemecko' },
@@ -390,6 +402,7 @@ class MainScene extends Phaser.Scene {
     });
     this.worldView.setVisible(this.mapStage === 'continents');
     this.europeView.setVisible(this.mapStage === 'europe');
+    this.mapStageLink.setText(this.mapStage === 'continents' ? 'Svetadiely' : '← späť na svetadiely');
     this.selectionText.setText(`Auto: ${this.selectedCar.name}   •   Mapa: ${this.selectedMap.name}`);
   }
 
@@ -398,9 +411,13 @@ class MainScene extends Phaser.Scene {
     const showMenu = s === 'menu';
     const playing = s === 'playing';
     this.menuRoot.setVisible(showMenu);
+    this.mapPanel.setVisible(showMenu);
     [this.wheelBase, this.wheelRing, this.wheelSpokes, this.wheelKnob, this.gasBtn, this.gasInner, this.gasTxt].forEach(o=>o.setVisible(playing));
+    this.btnBackMenu.setVisible(playing);
     this.uiInfo.setText(showMenu ? 'Vyber auto a mapu, potom štart.' : `Mapa: ${this.selectedMap.name} • Auto: ${this.selectedCar.name}`);
-    this.lightDot.setFillStyle(showMenu ? 0x2bdc4a : 0xffcc33);
+    if (!showMenu){
+      this.menuRoot.iterate?.(()=>{});
+    }
   }
 
   clearWorld(){
@@ -482,10 +499,23 @@ class MainScene extends Phaser.Scene {
     if (this.starting) return;
     this.starting = true;
     try {
+      this.ensureAudio();
       this.touch.gas = false; this.touch.gasId = null;
+      this.stopEngineSound();
       this.buildWorld(this.selectedMap);
       this.setState('playing');
     } finally { this.starting = false; }
+  }
+
+  returnToMenu(){
+    this.touch.gas = false;
+    this.touch.gasId = null;
+    this.stopEngineSound();
+    if (this.car && this.car.body){
+      this.car.body.setVelocity(0,0);
+      this.car.body.setAngularVelocity(0);
+    }
+    this.setState('menu');
   }
 
   onCrash(){
@@ -499,7 +529,7 @@ class MainScene extends Phaser.Scene {
     this.money += 100;
     this.best = Math.max(this.best, this.money);
     this.uiInfo.setText(`🏁 CÍL! Peníze: ${this.money} (best: ${this.best})`);
-    this.lightDot.setFillStyle(0x2bdc4a);
+    this.playWinTune();
     if (this.car && this.car.body){ this.car.body.setVelocity(0,0); this.car.body.setAngularVelocity(0); }
     this.setState('menu');
     this.menuRoot.setVisible(true);
@@ -514,22 +544,100 @@ class MainScene extends Phaser.Scene {
     const steer = this.wheel.active || this.wheelAngle !== 0 ? this.steer : kbSteer;
     const dt = delta / 1000;
     const speed = this.car.body.speed || 0;
-    const speedN = clamp(speed / this.selectedCar.maxSpeed, 0, 1);
+    const moving = speed > 8;
 
-    // Mechanically closer steering: wheel angle persists, car yaw depends on wheel angle and speed.
-    const turnRateDeg = 100; // max deg/s at full lock and full speed
-    const yaw = steer * turnRateDeg * (0.15 + 0.85 * speedN) * dt;
-    this.car.rotation += Phaser.Math.DegToRad(yaw);
+    if (moving){
+      const turnRateDeg = 160;
+      const speedN = clamp(speed / this.selectedCar.maxSpeed, 0, 1);
+      const yaw = steer * turnRateDeg * (0.20 + 0.80 * speedN) * dt;
+      this.car.rotation += Phaser.Math.DegToRad(yaw);
+    }
 
     if (gas){
       this.resumeCameraFollow();
       const angleDeg = (this.car.rotation * 180/Math.PI) - 90;
       const target = new Phaser.Math.Vector2();
       this.physics.velocityFromAngle(angleDeg, this.selectedCar.maxSpeed, target);
-      const a = clamp((this.selectedCar.accel || 520) / 800, 0.05, 0.18);
+      const a = clamp((this.selectedCar.accel || 520) / 820, 0.07, 0.22);
       this.car.body.velocity.x = Phaser.Math.Linear(this.car.body.velocity.x, target.x, a);
       this.car.body.velocity.y = Phaser.Math.Linear(this.car.body.velocity.y, target.y, a);
+      this.startEngineSound();
+    } else {
+      this.stopEngineSound();
     }
+    this.updateEngineSound(speed, gas);
+  }
+
+
+  ensureAudio(){
+    if (this.audioReady) return;
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    this.audioCtx = new Ctx();
+    this.audioReady = true;
+  }
+
+  startEngineSound(){
+    if (!this.audioCtx) return;
+    if (this.audioCtx.state === 'suspended') this.audioCtx.resume();
+    if (this.engineOsc) return;
+    const osc = this.audioCtx.createOscillator();
+    const gain = this.audioCtx.createGain();
+    const filter = this.audioCtx.createBiquadFilter();
+    osc.type = 'sawtooth';
+    filter.type = 'lowpass';
+    filter.frequency.value = 480;
+    osc.frequency.value = 90;
+    gain.gain.value = 0.0001;
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.audioCtx.destination);
+    osc.start();
+    gain.gain.exponentialRampToValueAtTime(0.045, this.audioCtx.currentTime + 0.05);
+    this.engineOsc = osc;
+    this.engineGain = gain;
+    this.engineFilter = filter;
+  }
+
+  updateEngineSound(speed, gas){
+    if (!this.engineOsc || !this.audioCtx) return;
+    const t = this.audioCtx.currentTime;
+    const s = clamp((speed || 0) / (this.selectedCar?.maxSpeed || 240), 0, 1);
+    this.engineOsc.frequency.setTargetAtTime(85 + s * 120 + (gas ? 22 : 0), t, 0.04);
+    if (this.engineFilter) this.engineFilter.frequency.setTargetAtTime(350 + s * 900, t, 0.07);
+    if (this.engineGain) this.engineGain.gain.setTargetAtTime(gas ? 0.05 : 0.0001, t, 0.05);
+  }
+
+  stopEngineSound(){
+    if (!this.engineOsc || !this.audioCtx) return;
+    const osc = this.engineOsc, gain = this.engineGain, t = this.audioCtx.currentTime;
+    this.engineOsc = null; this.engineGain = null; this.engineFilter = null;
+    try {
+      gain.gain.cancelScheduledValues(t);
+      gain.gain.setValueAtTime(Math.max(gain.gain.value, 0.0001), t);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.08);
+      osc.stop(t + 0.1);
+    } catch(e){}
+  }
+
+  playWinTune(){
+    if (!this.audioCtx) return;
+    if (this.audioCtx.state === 'suspended') this.audioCtx.resume();
+    const notes = [523.25, 659.25, 783.99, 1046.5];
+    const start = this.audioCtx.currentTime + 0.02;
+    notes.forEach((freq, i)=>{
+      const osc = this.audioCtx.createOscillator();
+      const gain = this.audioCtx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.value = freq;
+      gain.gain.value = 0.0001;
+      osc.connect(gain); gain.connect(this.audioCtx.destination);
+      const t0 = start + i * 0.18;
+      osc.start(t0);
+      gain.gain.exponentialRampToValueAtTime(0.06, t0 + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.22);
+      osc.stop(t0 + 0.24);
+    });
   }
 
   makeCarTexture(key, w, h, bodyColor, stripeColor, moto=false){
@@ -539,13 +647,13 @@ class MainScene extends Phaser.Scene {
       g.fillStyle(0x111111, 1).fillCircle(w * 0.35, h * 0.78, 8).fillCircle(w * 0.65, h * 0.78, 8);
       g.fillStyle(bodyColor, 1).fillRoundedRect(w * 0.36, h * 0.16, w * 0.28, h * 0.52, 10);
       g.fillStyle(stripeColor, 0.95).fillRect(w * 0.44, h * 0.22, w * 0.12, h * 0.24);
-      g.fillStyle(0x7fc8ff, 0.92).fillRoundedRect(w * 0.39, h * 0.48, w * 0.22, h * 0.12, 5);
+      g.fillStyle(0x7fc8ff, 0.92).fillRoundedRect(w * 0.39, h * 0.58, w * 0.22, h * 0.10, 5);
       g.lineStyle(4, 0x333333, 1).lineBetween(w * 0.28, h * 0.32, w * 0.72, h * 0.32).lineBetween(w * 0.36, h * 0.68, w * 0.64, h * 0.68);
-      g.fillStyle(0xff3333, 0.95).fillCircle(w * 0.50, h * 0.72, 4);
+      g.fillStyle(0xfff2a3, 0.95).fillCircle(w * 0.50, h * 0.18, 5);
     } else {
       g.fillStyle(0x111111, 1).fillCircle(w * 0.23, h * 0.2, 8).fillCircle(w * 0.77, h * 0.2, 8).fillCircle(w * 0.23, h * 0.8, 8).fillCircle(w * 0.77, h * 0.8, 8);
       g.fillStyle(bodyColor, 1).fillRoundedRect(w * 0.18, h * 0.08, w * 0.64, h * 0.84, 16);
-      g.fillStyle(0x7fc8ff, 0.92).fillRoundedRect(w * 0.28, h * 0.54, w * 0.44, h * 0.18, 8);
+      g.fillStyle(0x7fc8ff, 0.92).fillRoundedRect(w * 0.28, h * 0.62, w * 0.44, h * 0.16, 8);
       g.fillStyle(stripeColor, 0.95).fillRect(w * 0.43, h * 0.14, w * 0.14, h * 0.64);
       g.fillStyle(0xff3333, 0.9).fillRect(w * 0.25, h * 0.76, 8, 8).fillRect(w * 0.67, h * 0.76, 8, 8);
     }
