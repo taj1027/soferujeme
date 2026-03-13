@@ -2,401 +2,424 @@ const VIEW_W = 390;
 const VIEW_H = 780;
 const CELL = 44;
 
-const TITLE = "Šoférujeme verzia 4";
-
 const CARS = [
-  { id:"taxi",    name:"Taxi",    color:0xffd800, maxSpeed:230, accel:560 },
-  { id:"motorka", name:"Motorka", color:0xFF69B4, maxSpeed:280, accel:620, widthMul:0.55, heightMul:0.85 },
-  { id:"auto",    name:"Auto",    color:0xffffff, maxSpeed:240, accel:580, widthMul:1.0, heightMul:1.0 }
+  { id:"taxi",    name:"Taxi",    color:0xffd800, maxSpeed:230, accel:520 },
+  { id:"motorka", name:"Motorka", color:0xFF69B4, maxSpeed:280, accel:560, widthMul:0.55, heightMul:0.85 },
+  { id:"auto",    name:"Auto",    color:0xffffff, maxSpeed:240, accel:520, widthMul:1.0, heightMul:1.0 }
 ];
 
 const RULES = { finishReward: 100, crashPenalty: 10 };
 
 const MAPS = {
-  si: { id:"si", name:"Slovinsko", continent:"eu", locked:false, grid: [
+  si: { id:"si", name:"Slovinsko", unlocked:true, grid: [
     "........................",
     "........................",
-    "..........######........",
-    "........##########......",
-    "......#############.....",
-    ".....###############....",
-    "....################....",
-    "...##################...",
+    "...........######.......",
+    "........############....",
+    "......################..",
+    ".....##################.",
+    "....###################.",
+    "...####################.",
     "...###################..",
-    "..####################..",
-    "..####################..",
     "..###################...",
-    "...#################....",
-    "....###############.....",
-    ".....##############.....",
-    "......#############.....",
-    ".......###########......",
-    "........#########.......",
-    ".........#######........",
+    "..##################....",
+    "..#################.....",
+    "..################......",
+    "...###############......",
+    "....##############......",
+    ".....############.......",
+    "......###########.......",
+    ".......##########.......",
+    "........#######.........",
     "..........S####.........",
-    "...........#####........",
-    "............###F........",
+    "..............###.......",
+    "...............F##......",
     "........................",
     "........................"
   ]},
-  sk: { id:"sk", name:"Slovensko", continent:"eu", locked:true, grid: [] },
-  cz: { id:"cz", name:"Česko", continent:"eu", locked:true, grid: [] },
-  hr: { id:"hr", name:"Chorvátsko", continent:"eu", locked:true, grid: [] }
+  it: { id:"it", name:"Taliansko", unlocked:false },
+  at: { id:"at", name:"Rakúsko", unlocked:false },
+  hr: { id:"hr", name:"Chorvátsko", unlocked:false },
+  hu: { id:"hu", name:"Maďarsko", unlocked:false }
 };
 
 function clamp(v, a, b){ return Math.max(a, Math.min(b, v)); }
+function dist(ax, ay, bx, by){ return Math.hypot(ax - bx, ay - by); }
 
 class MainScene extends Phaser.Scene {
   constructor(){ super("main"); }
 
   init(){
     this.state = "menu";
-    this.menuStep = "atlas";
     this.money = 0;
     this.best = 0;
 
     this.carIndex = 0;
     this.selectedCar = CARS[this.carIndex];
-    this.selectedContinent = "eu";
     this.selectedMap = MAPS.si;
 
     this.gridVisible = false;
-    this.finishTriggered = false;
-
     this.steer = 0;
-    this.wheel = { active:false, id:null, cx:110, cy:VIEW_H-95, r:70, angle:-Math.PI/2 };
-    this.touch = { gas:false };
+    this.wheel = { active:false, id:null, cx:110, cy:VIEW_H-95, r:70 };
 
-    this.cameraDrag = { active:false, id:null, lastX:0, lastY:0 };
+    this.cameraDetached = false;
+    this.cameraZoom = 1;
+    this.dragPointerId = null;
+    this.dragLast = null;
+    this.pinch = { active:false, startDist:0, startZoom:1 };
+    this.menuMapMode = "world";
   }
 
   create(){
-    this.makeCarTexture("tex_car", 34, 54);
-    this.makeRectTexture("tex_ocean", CELL, CELL, 0x2778c7);
-    this.makeRectTexture("tex_land", CELL, CELL, 0x59a14f);
-    this.makeRectTexture("tex_locked", CELL, CELL, 0x1b3f66);
+    this.makeRectTexture("tex_car", 34, 54, 0xffffff);
+    this.makeRectTexture("tex_wall", CELL, CELL, 0x0b2a4a);
+    this.makeRectTexture("tex_road", CELL, CELL, 0x202020);
 
-    this.createUi();
-    this.createMenu();
-    this.createControls();
-    this.createInputHandlers();
-
-    this.physics.world.setBounds(0, 0, VIEW_W, VIEW_H);
-    this.setMenuStep("atlas");
-    this.setState("menu");
-  }
-
-  createUi(){
-    this.uiTitle = this.add.text(VIEW_W/2, 18, TITLE, { fontSize:"20px", color:"#ffffff", fontStyle:"bold" })
+    this.uiTitle = this.add.text(VIEW_W/2, 16, "Soferujeme 4", { fontSize:"18px", color:"#fff" })
       .setOrigin(0.5).setScrollFactor(0).setDepth(1000);
-    this.uiMoney = this.add.text(12, 50, "Peníze: 0", { fontSize:"16px", color:"#ffffff" })
+    this.uiMoney = this.add.text(12, 46, "Peníze: 0", { fontSize:"16px", color:"#fff" })
       .setScrollFactor(0).setDepth(1000);
-    this.uiInfo = this.add.text(12, 74, "", { fontSize:"14px", color:"#d9edf7" })
+    this.uiInfo  = this.add.text(12, 70, "", { fontSize:"14px", color:"#ccc" })
       .setScrollFactor(0).setDepth(1000);
 
-    this.uiLightBox = this.add.rectangle(VIEW_W-44, 58, 56, 56, 0x0e0e0e).setScrollFactor(0).setDepth(1000);
-    this.lightDot = this.add.circle(VIEW_W-44, 58, 16, 0x2bdc4a).setScrollFactor(0).setDepth(1001);
-  }
+    this.uiLightBox = this.add.rectangle(VIEW_W-44, 56, 56, 56, 0x0e0e0e).setScrollFactor(0).setDepth(1000);
+    this.lightDot = this.add.circle(VIEW_W-44, 56, 16, 0x2bdc4a).setScrollFactor(0).setDepth(1001);
 
-  createControls(){
     this.cursors = this.input.keyboard.createCursorKeys();
 
-    this.gasBtn = this.add.circle(VIEW_W-88, VIEW_H-82, 54, 0x000000, 0.35)
+    this.touch = { gas:false };
+    this.gasBtn = this.add.rectangle(VIEW_W-90, VIEW_H-80, 110, 110, 0x000000, 0.35)
       .setInteractive().setScrollFactor(0).setDepth(1000);
-    this.gasTxt = this.add.text(VIEW_W-88, VIEW_H-82, "⛽", { fontSize:"34px", color:"#fff" })
+    this.gasTxt = this.add.text(VIEW_W-90, VIEW_H-80, "⛽", { fontSize:"34px", color:"#fff" })
       .setOrigin(0.5).setScrollFactor(0).setDepth(1001);
 
-    this.gasBtn.on("pointerdown", ()=> this.touch.gas = true);
-    this.gasBtn.on("pointerup", ()=> this.touch.gas = false);
-    this.gasBtn.on("pointerout", ()=> this.touch.gas = false);
+    this.gasBtn.on("pointerdown", ()=>{
+      this.touch.gas = true;
+      this.attachCameraToCar();
+    });
+    this.gasBtn.on("pointerup",   ()=> this.touch.gas = false);
+    this.gasBtn.on("pointerout",  ()=> this.touch.gas = false);
 
     this.wheelBase = this.add.circle(this.wheel.cx, this.wheel.cy, this.wheel.r, 0x000000, 0.30)
       .setScrollFactor(0).setDepth(1000);
-    this.wheelRing = this.add.circle(this.wheel.cx, this.wheel.cy, this.wheel.r-10, 0xffffff, 0.08)
+    this.wheelRing = this.add.circle(this.wheel.cx, this.wheel.cy, this.wheel.r-10, 0xffffff, 0.06)
       .setScrollFactor(0).setDepth(1001);
-    this.wheelSpokeA = this.add.rectangle(this.wheel.cx, this.wheel.cy-18, 8, 64, 0xffffff, 0.22)
-      .setScrollFactor(0).setDepth(1002).setOrigin(0.5, 0.75);
-    this.wheelSpokeB = this.add.rectangle(this.wheel.cx-20, this.wheel.cy+18, 8, 50, 0xffffff, 0.22)
-      .setScrollFactor(0).setDepth(1002).setOrigin(0.5, 0.2).setRotation(-0.9);
-    this.wheelSpokeC = this.add.rectangle(this.wheel.cx+20, this.wheel.cy+18, 8, 50, 0xffffff, 0.22)
-      .setScrollFactor(0).setDepth(1002).setOrigin(0.5, 0.2).setRotation(0.9);
-    this.wheelHub = this.add.circle(this.wheel.cx, this.wheel.cy, 16, 0xffffff, 0.18)
-      .setScrollFactor(0).setDepth(1003);
-    this.wheelKnob = this.add.circle(this.wheel.cx, this.wheel.cy - (this.wheel.r-16), 10, 0xffffff, 0.28)
-      .setScrollFactor(0).setDepth(1004);
+    this.wheelKnob = this.add.circle(this.wheel.cx, this.wheel.cy - (this.wheel.r-16), 12, 0xffffff, 0.18)
+      .setScrollFactor(0).setDepth(1002);
 
-    this.rotateWheelVisual(-Math.PI/2);
-  }
+    this.input.addPointer(3);
 
-  createMenu(){
-    const w = VIEW_W;
-    const h = VIEW_H;
-
-    this.menuContainer = this.add.container(0, 0).setDepth(2000).setScrollFactor(0);
-    this.menuBg = this.add.rectangle(w/2, h/2, w*0.94, h*0.80, 0x041a2f, 0.92);
-    this.menuTitle = this.add.text(w/2, 120, "Vyber mapu", { fontSize:"24px", color:"#ffffff", fontStyle:"bold" }).setOrigin(0.5);
-    this.menuSubtitle = this.add.text(w/2, 154, "Atlas sveta", { fontSize:"15px", color:"#b7d9f7" }).setOrigin(0.5);
-    this.menuContainer.add([this.menuBg, this.menuTitle, this.menuSubtitle]);
-
-    this.atlasContainer = this.add.container(0, 0);
-    this.menuContainer.add(this.atlasContainer);
-
-    const atlasX = w/2;
-    const atlasY = 372;
-    this.atlasOcean = this.add.rectangle(atlasX, atlasY, 300, 250, 0x2f8ed8, 1).setStrokeStyle(3, 0x9fd6ff, 0.35);
-    this.atlasContainer.add(this.atlasOcean);
-
-    this.continentNodes = {};
-    this.makeContinent("na", atlasX-86, atlasY-28, 78, 54, 0x477b35, "Sev. Amerika", true);
-    this.makeContinent("sa", atlasX-66, atlasY+56, 46, 70, 0x477b35, "Juž. Amerika", true);
-    this.makeContinent("eu", atlasX+34, atlasY-40, 54, 34, 0x6fd45f, "Európa", false);
-    this.makeContinent("af", atlasX+48, atlasY+36, 56, 78, 0x477b35, "Afrika", true);
-    this.makeContinent("asia", atlasX+108, atlasY-16, 96, 68, 0x477b35, "Ázia", true);
-    this.makeContinent("au", atlasX+122, atlasY+88, 50, 34, 0x477b35, "Austrália", true);
-
-    this.atlasHint = this.add.text(w/2, 520, "Klikni na svetadiel", { fontSize:"15px", color:"#e8f6ff" }).setOrigin(0.5);
-    this.atlasContainer.add(this.atlasHint);
-
-    this.countryContainer = this.add.container(0, 0);
-    this.menuContainer.add(this.countryContainer);
-
-    this.countryPanel = this.add.rectangle(w/2, 380, 300, 280, 0x0a2744, 1).setStrokeStyle(2, 0x79b9ff, 0.4);
-    this.countryTitle = this.add.text(w/2, 255, "Európa", { fontSize:"22px", color:"#ffffff", fontStyle:"bold" }).setOrigin(0.5);
-    this.countrySubtitle = this.add.text(w/2, 285, "Odomknuté: Slovinsko", { fontSize:"14px", color:"#b8d8f8" }).setOrigin(0.5);
-    this.countryContainer.add([this.countryPanel, this.countryTitle, this.countrySubtitle]);
-
-    this.countryCards = [];
-    this.createCountryCard(1, 320, MAPS.si.name, false, ()=>{ this.selectedMap = MAPS.si; this.refreshCountryCards(); });
-    this.createCountryCard(2, 390, MAPS.sk.name, true);
-    this.createCountryCard(3, 460, MAPS.cz.name, true);
-    this.createCountryCard(4, 530, MAPS.hr.name, true);
-
-    this.btnBack = this.add.rectangle(86, 620, 110, 46, 0x173b5f, 1).setInteractive();
-    this.btnBackTxt = this.add.text(86, 620, "Späť", { fontSize:"18px", color:"#ffffff" }).setOrigin(0.5);
-    this.btnBack.on("pointerdown", ()=> this.setMenuStep("atlas"));
-
-    this.btnCarPrev = this.add.rectangle(100, 680, 56, 48, 0x1b4f79, 1).setInteractive();
-    this.btnCarNext = this.add.rectangle(290, 680, 56, 48, 0x1b4f79, 1).setInteractive();
-    this.btnCarPrevTxt = this.add.text(100, 680, "◀", { fontSize:"24px", color:"#ffffff" }).setOrigin(0.5);
-    this.btnCarNextTxt = this.add.text(290, 680, "▶", { fontSize:"24px", color:"#ffffff" }).setOrigin(0.5);
-    this.carLabel = this.add.text(w/2, 652, "AUTO", { fontSize:"13px", color:"#9dc7eb" }).setOrigin(0.5);
-    this.carText = this.add.text(w/2, 684, "", { fontSize:"18px", color:"#ffffff", align:"center" }).setOrigin(0.5);
-
-    this.btnStart = this.add.rectangle(w/2, 736, 220, 58, 0x2bdc4a, 1).setInteractive();
-    this.btnStartTxt = this.add.text(w/2, 736, "ŠTART", { fontSize:"22px", color:"#10210c", fontStyle:"bold" }).setOrigin(0.5);
-
-    this.countryContainer.add([
-      this.btnBack, this.btnBackTxt,
-      this.btnCarPrev, this.btnCarNext,
-      this.btnCarPrevTxt, this.btnCarNextTxt,
-      this.carLabel, this.carText,
-      this.btnStart, this.btnStartTxt
-    ]);
-
-    this.btnCarPrev.on("pointerdown", ()=>{
-      this.carIndex = (this.carIndex - 1 + CARS.length) % CARS.length;
-      this.selectedCar = CARS[this.carIndex];
-      this.refreshCarText();
-    });
-    this.btnCarNext.on("pointerdown", ()=>{
-      this.carIndex = (this.carIndex + 1) % CARS.length;
-      this.selectedCar = CARS[this.carIndex];
-      this.refreshCarText();
-    });
-    this.btnStart.on("pointerdown", ()=> this.startGame());
-
-    this.refreshCarText();
-    this.refreshCountryCards();
-  }
-
-  makeContinent(key, x, y, w, h, color, label, locked){
-    const body = this.add.ellipse(x, y, w, h, color, 1).setStrokeStyle(2, 0x1e4422, 0.25);
-    const txt = this.add.text(x, y + h/2 + 16, label, { fontSize:"11px", color:"#e8f6ff" }).setOrigin(0.5);
-    const lockBadge = locked ? this.add.text(x, y, "🔒", { fontSize:"18px" }).setOrigin(0.5) : null;
-    body.setInteractive({ useHandCursor: !locked });
-    body.on("pointerdown", ()=>{
-      if (locked) return;
-      this.selectedContinent = key;
-      this.setMenuStep("country");
-    });
-    this.continentNodes[key] = { body, txt, lockBadge, locked };
-    this.atlasContainer.add([body, txt]);
-    if (lockBadge) this.atlasContainer.add(lockBadge);
-  }
-
-  createCountryCard(order, y, name, locked, onClick){
-    const rect = this.add.rectangle(VIEW_W/2, y, 230, 50, locked ? 0x19354f : 0x245f2a, 1)
-      .setStrokeStyle(2, locked ? 0x315879 : 0x7cff75, locked ? 0.35 : 0.5)
-      .setInteractive({ useHandCursor: !locked });
-    const label = this.add.text(VIEW_W/2, y, locked ? `${name}  🔒` : name, {
-      fontSize:"18px", color: locked ? "#8db2d2" : "#ffffff", fontStyle: locked ? "normal" : "bold"
-    }).setOrigin(0.5);
-
-    if (!locked && onClick) rect.on("pointerdown", onClick);
-
-    this.countryContainer.add([rect, label]);
-    this.countryCards.push({ rect, label, locked, name, mapId: locked ? null : "si" });
-  }
-
-  setMenuStep(step){
-    this.menuStep = step;
-    const atlas = step === "atlas";
-    const country = step === "country";
-
-    this.atlasContainer.setVisible(atlas);
-    this.countryContainer.setVisible(country);
-
-    this.menuTitle.setText(atlas ? "Vyber mapu" : "Európa");
-    this.menuSubtitle.setText(atlas ? "Atlas sveta" : "Klikni na krajinu");
-
-    this.highlightEurope();
-    this.refreshCarText();
-    this.refreshCountryCards();
-  }
-
-  highlightEurope(){
-    Object.entries(this.continentNodes).forEach(([key, node])=>{
-      const active = key === "eu";
-      if (active) {
-        node.body.setFillStyle(0x7be36c, 1);
-        node.body.setStrokeStyle(3, 0xffffff, 0.55);
-      } else {
-        node.body.setFillStyle(0x477b35, 1);
-        node.body.setStrokeStyle(2, 0x1e4422, 0.25);
-      }
-    });
-  }
-
-  refreshCountryCards(){
-    this.countryCards.forEach(card=>{
-      if (card.locked) return;
-      const active = this.selectedMap && this.selectedMap.id === card.mapId;
-      card.rect.setFillStyle(active ? 0x2b8a35 : 0x245f2a, 1);
-      card.rect.setStrokeStyle(2, 0x7cff75, active ? 0.95 : 0.5);
-      card.label.setText(active ? `${card.name} ✓` : card.name);
-    });
-  }
-
-  refreshCarText(){
-    this.carText.setText(`${this.selectedCar.name} · max ${this.selectedCar.maxSpeed}`);
-  }
-
-  createInputHandlers(){
     this.input.on("pointerdown", (p)=>{
       if (this.state !== "playing") return;
-
-      if (this.isPointerOnWheel(p)) {
+      if (this.isPointerOnWheel(p)){
+        this.attachCameraToCar();
         this.wheel.active = true;
         this.wheel.id = p.id;
         this.updateWheelFromPointer(p);
         return;
       }
-
       if (this.isPointerOnGas(p)) return;
 
-      if ((this.car?.body?.speed || 0) < 10) {
-        this.cameraDrag.active = true;
-        this.cameraDrag.id = p.id;
-        this.cameraDrag.lastX = p.x;
-        this.cameraDrag.lastY = p.y;
+      const activeTouches = this.getNonControlPointers();
+      if (activeTouches.length >= 2){
+        this.startPinch();
+      } else {
+        this.detachCameraForFreeLook();
+        this.dragPointerId = p.id;
+        this.dragLast = { x:p.x, y:p.y };
       }
     });
 
     this.input.on("pointermove", (p)=>{
       if (this.state !== "playing") return;
 
-      if (this.wheel.active && p.id === this.wheel.id) {
+      if (this.wheel.active && p.id === this.wheel.id){
         this.updateWheelFromPointer(p);
         return;
       }
 
-      if (this.cameraDrag.active && p.id === this.cameraDrag.id && (this.car?.body?.speed || 0) < 10) {
-        const dx = p.x - this.cameraDrag.lastX;
-        const dy = p.y - this.cameraDrag.lastY;
-        this.cameraDrag.lastX = p.x;
-        this.cameraDrag.lastY = p.y;
+      const freeTouches = this.getNonControlPointers();
+      if (freeTouches.length >= 2){
+        this.handlePinchZoom(freeTouches[0], freeTouches[1]);
+        return;
+      }
 
+      if (this.dragPointerId === p.id && this.dragLast){
+        this.detachCameraForFreeLook();
         const cam = this.cameras.main;
-        cam.scrollX = clamp(cam.scrollX - dx, 0, Math.max(0, this.worldW - VIEW_W));
-        cam.scrollY = clamp(cam.scrollY - dy, 0, Math.max(0, this.worldH - VIEW_H));
+        cam.scrollX -= (p.x - this.dragLast.x) / cam.zoom;
+        cam.scrollY -= (p.y - this.dragLast.y) / cam.zoom;
+        this.clampCameraToBounds();
+        this.dragLast = { x:p.x, y:p.y };
       }
     });
 
-    this.input.on("pointerup", (p)=> this.releasePointer(p));
-    this.input.on("pointerupoutside", (p)=> this.releasePointer(p));
+    const releaseWheel = ()=>{
+      this.wheel.active = false;
+      this.wheel.id = null;
+      this.steer = 0;
+      this.wheelKnob.setPosition(this.wheel.cx, this.wheel.cy - (this.wheel.r-16));
+    };
+
+    this.input.on("pointerup", (p)=>{
+      if (this.wheel.active && p.id === this.wheel.id) releaseWheel();
+      if (this.dragPointerId === p.id){
+        this.dragPointerId = null;
+        this.dragLast = null;
+      }
+      if (this.getNonControlPointers().length < 2){
+        this.pinch.active = false;
+      }
+    });
+    this.input.on("pointerupoutside", ()=>{
+      if (this.wheel.active) releaseWheel();
+      this.dragPointerId = null;
+      this.dragLast = null;
+      this.pinch.active = false;
+    });
 
     this.input.keyboard.on("keydown-G", ()=>{
       if (this.state !== "playing") return;
       this.gridVisible = !this.gridVisible;
       if (this.gridLayer) this.gridLayer.setVisible(this.gridVisible);
     });
-  }
 
-  releasePointer(p){
-    if (this.wheel.active && (!p || p.id === this.wheel.id)) {
-      this.wheel.active = false;
-      this.wheel.id = null;
-      this.steer = 0;
-      this.rotateWheelVisual(-Math.PI/2);
-    }
-    if (this.cameraDrag.active && (!p || p.id === this.cameraDrag.id)) {
-      this.cameraDrag.active = false;
-      this.cameraDrag.id = null;
-    }
-    if (!p || this.isPointerOnGas(p)) this.touch.gas = false;
+    this.buildMenu();
+    this.physics.world.setBounds(0, 0, VIEW_W, VIEW_H);
+
+    this.refreshMenuTexts();
+    this.setState("menu");
   }
 
   isPointerOnWheel(p){
-    return Math.hypot(p.x - this.wheel.cx, p.y - this.wheel.cy) <= this.wheel.r;
+    const dx = p.x - this.wheel.cx;
+    const dy = p.y - this.wheel.cy;
+    return Math.hypot(dx, dy) <= this.wheel.r;
   }
 
   isPointerOnGas(p){
-    return Math.hypot(p.x - (VIEW_W-88), p.y - (VIEW_H-82)) <= 54;
+    return Phaser.Geom.Rectangle.Contains(this.gasBtn.getBounds(), p.x, p.y);
+  }
+
+  getNonControlPointers(){
+    return this.input.manager.pointers.filter(p => p.isDown && !this.isPointerOnWheel(p) && !this.isPointerOnGas(p));
+  }
+
+  startPinch(){
+    const pts = this.getNonControlPointers();
+    if (pts.length < 2) return;
+    this.detachCameraForFreeLook();
+    this.pinch.active = true;
+    this.pinch.startDist = dist(pts[0].x, pts[0].y, pts[1].x, pts[1].y);
+    this.pinch.startZoom = this.cameras.main.zoom;
+    this.dragPointerId = null;
+    this.dragLast = null;
+  }
+
+  handlePinchZoom(a, b){
+    if (!this.pinch.active){
+      this.startPinch();
+      return;
+    }
+    const d = dist(a.x, a.y, b.x, b.y);
+    if (!this.pinch.startDist) return;
+    const z = clamp(this.pinch.startZoom * (d / this.pinch.startDist), 0.65, 2.1);
+    this.cameraZoom = z;
+    this.cameras.main.setZoom(z);
+    this.clampCameraToBounds();
+  }
+
+  detachCameraForFreeLook(){
+    if (this.cameraDetached || !this.car) return;
+    this.cameraDetached = true;
+    this.cameras.main.stopFollow();
+  }
+
+  attachCameraToCar(){
+    if (!this.car) return;
+    this.cameraDetached = false;
+    this.cameraZoom = 1;
+    this.cameras.main.setZoom(1);
+    this.cameras.main.startFollow(this.car, true, 0.16, 0.16);
+    this.cameras.main.setDeadzone(40, 60);
+  }
+
+  clampCameraToBounds(){
+    const cam = this.cameras.main;
+    const maxX = Math.max(0, this.worldW - cam.width / cam.zoom);
+    const maxY = Math.max(0, this.worldH - cam.height / cam.zoom);
+    cam.scrollX = clamp(cam.scrollX, 0, maxX);
+    cam.scrollY = clamp(cam.scrollY, 0, maxY);
   }
 
   updateWheelFromPointer(p){
     const dx = p.x - this.wheel.cx;
     const dy = p.y - this.wheel.cy;
-    let angle = Math.atan2(dy, dx);
-    angle = clamp(angle, -2.55, -0.59);
-
-    this.wheel.angle = angle;
-    this.rotateWheelVisual(angle);
-
-    const t = (angle + Math.PI/2) / 0.98;
-    this.steer = clamp(t, -1, 1);
+    const r = this.wheel.r - 16;
+    const len = Math.hypot(dx, dy) || 1;
+    const nx = dx / len;
+    const ny = dy / len;
+    this.wheelKnob.setPosition(this.wheel.cx + nx*r, this.wheel.cy + ny*r);
+    this.steer = clamp(dx / this.wheel.r, -1, 1);
   }
 
-  rotateWheelVisual(angle){
-    const spokeAngle = angle + Math.PI/2;
-    const knobRadius = this.wheel.r - 16;
-    this.wheelKnob.setPosition(
-      this.wheel.cx + Math.cos(angle) * knobRadius,
-      this.wheel.cy + Math.sin(angle) * knobRadius
-    );
-    this.wheelSpokeA.setRotation(spokeAngle);
-    this.wheelSpokeB.setRotation(spokeAngle - 2.12);
-    this.wheelSpokeC.setRotation(spokeAngle + 2.12);
+  buildMenu(){
+    const w = VIEW_W, h = VIEW_H;
+    this.menuBg = this.add.rectangle(w/2, h/2, w*0.94, h*0.80, 0x000000, 0.76).setScrollFactor(0).setDepth(2000);
+    this.menuTitle = this.add.text(w/2, 48, "Soferujeme 4", { fontSize:"24px", color:"#fff", fontStyle:"bold" })
+      .setOrigin(0.5).setScrollFactor(0).setDepth(2001);
+
+    this.menuCarLabel = this.add.text(w/2, 100, "VYBER AUTO", { fontSize:"14px", color:"#bdbdbd" })
+      .setOrigin(0.5).setScrollFactor(0).setDepth(2001);
+    this.menuCarPreview = this.add.rectangle(w/2, 165, 78, 126, this.selectedCar.color, 1)
+      .setStrokeStyle(4, 0xffffff, 0.25).setScrollFactor(0).setDepth(2001);
+    this.menuCarText = this.add.text(w/2, 240, "", { fontSize:"18px", color:"#fff", align:"center" })
+      .setOrigin(0.5).setScrollFactor(0).setDepth(2001);
+    this.btnCarPrev = this.add.rectangle(w/2-120, 165, 90, 54, 0x222, 1).setInteractive().setScrollFactor(0).setDepth(2001);
+    this.btnCarNext = this.add.rectangle(w/2+120, 165, 90, 54, 0x222, 1).setInteractive().setScrollFactor(0).setDepth(2001);
+    this.btnCarPrevTxt = this.add.text(w/2-120, 165, "◀", { fontSize:"26px", color:"#fff" }).setOrigin(0.5).setScrollFactor(0).setDepth(2002);
+    this.btnCarNextTxt = this.add.text(w/2+120, 165, "▶", { fontSize:"26px", color:"#fff" }).setOrigin(0.5).setScrollFactor(0).setDepth(2002);
+
+    this.menuMapLabel = this.add.text(w/2, 300, "VYBER MAPU", { fontSize:"14px", color:"#bdbdbd" })
+      .setOrigin(0.5).setScrollFactor(0).setDepth(2001);
+    this.menuMapSubLabel = this.add.text(w/2, 326, "Klikni na Európu → potom na Slovinsko", { fontSize:"13px", color:"#d7d7d7" })
+      .setOrigin(0.5).setScrollFactor(0).setDepth(2001);
+
+    this.mapPanel = this.add.container(0,0).setScrollFactor(0).setDepth(2001);
+    this.mapPanelBg = this.add.rectangle(w/2, 515, 320, 300, 0x0a3d91, 1).setStrokeStyle(3, 0xffffff, 0.15);
+    this.mapPanel.add(this.mapPanelBg);
+
+    this.worldShapes = [];
+    this.europeShapes = [];
+
+    this.buildWorldAtlas();
+    this.buildEuropeAtlas();
+
+    this.menuMapText = this.add.text(w/2, 665, "", { fontSize:"18px", color:"#fff", align:"center" })
+      .setOrigin(0.5).setScrollFactor(0).setDepth(2001);
+
+    this.btnBackToWorld = this.add.rectangle(76, 352, 86, 34, 0x1f1f1f, 1).setInteractive().setScrollFactor(0).setDepth(2002);
+    this.btnBackToWorldTxt = this.add.text(76, 352, "← späť", { fontSize:"15px", color:"#fff" })
+      .setOrigin(0.5).setScrollFactor(0).setDepth(2003);
+    this.btnBackToWorld.on("pointerdown", ()=>{
+      this.menuMapMode = "world";
+      this.updateMapMenuVisibility();
+    });
+
+    this.btnStart = this.add.rectangle(w/2, 728, 240, 66, 0x2bdc4a, 1).setInteractive().setScrollFactor(0).setDepth(2001);
+    this.btnStartTxt = this.add.text(w/2, 728, "START", { fontSize:"22px", color:"#111" })
+      .setOrigin(0.5).setScrollFactor(0).setDepth(2002);
+
+    this.btnCarPrev.on("pointerdown", ()=>{
+      this.carIndex = (this.carIndex - 1 + CARS.length) % CARS.length;
+      this.selectedCar = CARS[this.carIndex];
+      this.refreshMenuTexts();
+    });
+    this.btnCarNext.on("pointerdown", ()=>{
+      this.carIndex = (this.carIndex + 1) % CARS.length;
+      this.selectedCar = CARS[this.carIndex];
+      this.refreshMenuTexts();
+    });
+    this.btnStart.on("pointerdown", ()=> this.startGame());
+
+    this.updateMapMenuVisibility();
+  }
+
+  buildWorldAtlas(){
+    const mk = (x, y, w, h, color, label, onClick)=>{
+      const r = this.add.rectangle(x, y, w, h, color, 1).setStrokeStyle(2, 0xffffff, 0.14).setInteractive();
+      const t = this.add.text(x, y, label, { fontSize:"14px", color:"#fff", fontStyle:"bold" }).setOrigin(0.5);
+      if (onClick) r.on("pointerdown", onClick);
+      this.mapPanel.add([r,t]);
+      this.worldShapes.push(r,t);
+      return r;
+    };
+
+    mk(92, 452, 70, 48, 0x3f8f45, "S. Amerika");
+    mk(116, 555, 52, 84, 0x3f8f45, "J. Amerika");
+    mk(196, 450, 62, 44, 0x4ea85b, "Európa", ()=>{
+      this.menuMapMode = "europe";
+      this.updateMapMenuVisibility();
+    });
+    mk(228, 532, 92, 118, 0x3f8f45, "Afrika");
+    mk(274, 450, 118, 92, 0x447f3d, "Ázia");
+    mk(308, 582, 62, 36, 0x5b9e45, "Austrália");
+  }
+
+  buildEuropeAtlas(){
+    const country = (x, y, w, h, name, mapObj, unlocked)=>{
+      const fill = unlocked ? 0x4ea85b : 0x5e5e5e;
+      const alpha = unlocked ? 1 : 0.72;
+      const r = this.add.rectangle(x, y, w, h, fill, alpha).setStrokeStyle(2, 0xffffff, 0.18);
+      const t = this.add.text(x, y, unlocked ? name : "🔒", { fontSize: unlocked ? "13px" : "20px", color:"#fff", fontStyle:"bold" }).setOrigin(0.5);
+      if (unlocked){
+        r.setInteractive();
+        r.on("pointerdown", ()=>{
+          this.selectedMap = mapObj;
+          this.refreshMenuTexts();
+        });
+      }
+      this.mapPanel.add([r,t]);
+      this.europeShapes.push(r,t);
+    };
+
+    const seaText = this.add.text(195, 392, "Európa", { fontSize:"20px", color:"#dcefff", fontStyle:"bold" }).setOrigin(0.5);
+    this.mapPanel.add(seaText);
+    this.europeShapes.push(seaText);
+
+    country(162, 468, 48, 32, "🔒", MAPS.it, false);   // France-ish lock area left
+    country(205, 454, 42, 28, "🔒", MAPS.at, false);   // Germany/Austria
+    country(226, 487, 28, 18, "Slovinsko", MAPS.si, true);
+    country(248, 504, 36, 24, "🔒", MAPS.hr, false);
+    country(252, 470, 42, 26, "🔒", MAPS.hu, false);
+    country(188, 510, 42, 44, "🔒", MAPS.it, false);
+    country(282, 498, 42, 34, "🔒", MAPS.hu, false);
+  }
+
+  updateMapMenuVisibility(){
+    const world = this.menuMapMode === "world";
+    this.worldShapes.forEach(o => o.setVisible(world));
+    this.europeShapes.forEach(o => o.setVisible(!world));
+    this.btnBackToWorld.setVisible(!world);
+    this.btnBackToWorldTxt.setVisible(!world);
+    this.menuMapSubLabel.setText(world ? "Klikni na Európu → potom na Slovinsko" : "Slovinsko je odomknuté, ostatné krajiny sú zatiaľ zamknuté");
+  }
+
+  refreshMenuTexts(){
+    const c = this.selectedCar;
+    this.menuCarPreview.fillColor = c.color;
+    this.menuCarText.setText(`${c.name}\nmax ${c.maxSpeed}`);
+    this.menuMapText.setText(`Mapa: ${this.selectedMap.name}`);
   }
 
   setState(s){
     this.state = s;
-    const showMenu = s === "menu";
-    const playing = s === "playing";
-
-    this.menuContainer.setVisible(showMenu);
+    const showMenu = (s === "menu");
+    const playing = (s === "playing");
 
     [
-      this.wheelBase, this.wheelRing, this.wheelSpokeA, this.wheelSpokeB, this.wheelSpokeC,
-      this.wheelHub, this.wheelKnob, this.gasBtn, this.gasTxt
-    ].forEach(o => o.setVisible(playing));
+      this.menuBg, this.menuTitle,
+      this.menuCarLabel, this.menuCarPreview, this.menuCarText,
+      this.btnCarPrev, this.btnCarNext,
+      this.btnCarPrevTxt, this.btnCarNextTxt,
+      this.menuMapLabel, this.menuMapSubLabel, this.menuMapText,
+      this.mapPanel, this.btnBackToWorld, this.btnBackToWorldTxt,
+      this.btnStart, this.btnStartTxt
+    ].forEach(o => o.setVisible(showMenu));
+    this.updateMapMenuVisibility();
 
-    if (showMenu) {
-      this.uiInfo.setText("Vyber Európu → Slovinsko.");
+    this.wheelBase.setVisible(playing);
+    this.wheelRing.setVisible(playing);
+    this.wheelKnob.setVisible(playing);
+    this.gasBtn.setVisible(playing);
+    this.gasTxt.setVisible(playing);
+
+    if (showMenu){
+      this.uiInfo.setText("Vyber auto hore a mapu dole.");
       this.lightDot.setFillStyle(0x2bdc4a);
-      this.touch.gas = false;
     } else {
-      this.lightDot.setFillStyle(0xffc93a);
+      this.uiInfo.setText(`Mapa: ${this.selectedMap.name} • Auto: ${this.selectedCar.name}`);
+      this.lightDot.setFillStyle(0xffd84a);
     }
   }
 
@@ -417,61 +440,63 @@ class MainScene extends Phaser.Scene {
   }
 
   normalizeGrid(grid){
+    const rows = grid.length;
     const cols = Math.max(...grid.map(s=>s.length));
-    return grid.map(line => line.padEnd(cols, "."));
-  }
-
-  isLandCell(grid, x, y){
-    if (y < 0 || y >= grid.length || x < 0 || x >= grid[0].length) return false;
-    return ["#", "S", "F"].includes(grid[y][x]);
+    const out = [];
+    for (let y=0; y<rows; y++) out.push(grid[y].padEnd(cols, "."));
+    return out;
   }
 
   findCell(grid, ch){
-    for (let y=0; y<grid.length; y++) {
-      for (let x=0; x<grid[y].length; x++) {
-        if (grid[y][x] === ch) return {x, y};
-      }
+    for (let y=0; y<grid.length; y++){
+      const line = grid[y];
+      for (let x=0; x<line.length; x++) if (line[x] === ch) return {x,y};
     }
     return null;
   }
 
+  isDriveable(grid, x, y){
+    if (y < 0 || y >= grid.length || x < 0 || x >= grid[0].length) return false;
+    const c = grid[y][x];
+    return c === "#" || c === "S" || c === "F";
+  }
+
   findSafeLand(grid){
-    for (let y=1; y<grid.length-1; y++) {
-      for (let x=1; x<grid[y].length-1; x++) {
-        if (this.isLandCell(grid, x, y)) return {x, y};
+    for (let y=1; y<grid.length-1; y++){
+      const line = grid[y];
+      for (let x=1; x<line.length-1; x++){
+        if (!this.isDriveable(grid, x, y)) continue;
+        if (this.isDriveable(grid, x-1, y) && this.isDriveable(grid, x+1, y) && this.isDriveable(grid, x, y-1) && this.isDriveable(grid, x, y+1)){
+          return {x,y};
+        }
       }
     }
-    for (let y=0; y<grid.length; y++) {
-      for (let x=0; x<grid[y].length; x++) {
-        if (this.isLandCell(grid, x, y)) return {x, y};
+    for (let y=0; y<grid.length; y++){
+      for (let x=0; x<grid[0].length; x++){
+        if (this.isDriveable(grid, x, y)) return {x,y};
       }
     }
     return {x:1,y:1};
   }
 
-  findGoalCell(grid, startCell){
-    const found = this.findCell(grid, "F");
-    const candidate = found && this.isGoalUsable(grid, found.x, found.y) ? found : null;
-    if (candidate) return candidate;
-
-    let best = null;
-    for (let y=1; y<grid.length-1; y++) {
-      for (let x=1; x<grid[y].length-1; x++) {
-        if (!this.isGoalUsable(grid, x, y)) continue;
+  ensureFinishInside(grid, finishCell, startCell){
+    if (finishCell && this.isDriveable(grid, finishCell.x, finishCell.y)) return finishCell;
+    const candidates = [];
+    for (let y=1; y<grid.length-1; y++){
+      for (let x=1; x<grid[0].length-1; x++){
+        if (!this.isDriveable(grid, x, y)) continue;
+        if (!this.isDriveable(grid, x-1, y) || !this.isDriveable(grid, x+1, y) || !this.isDriveable(grid, x, y-1) || !this.isDriveable(grid, x, y+1)) continue;
         const d = Math.abs(x - startCell.x) + Math.abs(y - startCell.y);
-        if (!best || d > best.dist) best = { x, y, dist:d };
+        if (d >= 6) candidates.push({x,y,d});
       }
     }
-    return best ? { x:best.x, y:best.y } : this.findSafeLand(grid);
-  }
-
-  isGoalUsable(grid, x, y){
-    if (!this.isLandCell(grid, x, y)) return false;
-    return this.isLandCell(grid, x-1, y) && this.isLandCell(grid, x+1, y) && this.isLandCell(grid, x, y-1) && this.isLandCell(grid, x, y+1);
+    candidates.sort((a,b)=> b.d - a.d);
+    return candidates[0] || this.findSafeLand(grid);
   }
 
   buildWorld(mapDef){
     this.clearWorld();
+
     const grid = this.normalizeGrid(mapDef.grid);
     const rows = grid.length;
     const cols = grid[0].length;
@@ -484,17 +509,17 @@ class MainScene extends Phaser.Scene {
     this.wallGroup = this.physics.add.staticGroup();
     this.obstacles = this.physics.add.staticGroup();
 
-    for (let y=0; y<rows; y++) {
-      for (let x=0; x<cols; x++) {
-        const ch = grid[y][x];
-        const cx = x*CELL + CELL/2;
-        const cy = y*CELL + CELL/2;
-        const isLand = this.isLandCell(grid, x, y);
+    for (let y=0; y<rows; y++){
+      const line = grid[y];
+      for (let x=0; x<cols; x++){
+        const ch = line[x];
+        const cx = x * CELL + CELL/2;
+        const cy = y * CELL + CELL/2;
 
-        const tile = this.add.image(cx, cy, isLand ? "tex_land" : "tex_ocean");
-        this.landLayer.add(tile);
-
-        if (!isLand) {
+        if (this.isDriveable(grid, x, y)){
+          this.landLayer.add(this.add.image(cx, cy, "tex_road"));
+        } else {
+          this.landLayer.add(this.add.image(cx, cy, "tex_wall"));
           const wall = this.add.rectangle(cx, cy, CELL, CELL, 0x000000, 0);
           this.physics.add.existing(wall, true);
           this.wallGroup.add(wall);
@@ -504,13 +529,13 @@ class MainScene extends Phaser.Scene {
 
     this.gridLayer = this.add.graphics();
     this.gridLayer.setVisible(this.gridVisible);
-    this.gridLayer.lineStyle(1, 0xffffff, 0.12);
+    this.gridLayer.lineStyle(1, 0xffffff, 0.10);
     for (let y=0; y<=rows; y++) this.gridLayer.lineBetween(0, y*CELL, this.worldW, y*CELL);
     for (let x=0; x<=cols; x++) this.gridLayer.lineBetween(x*CELL, 0, x*CELL, this.worldH);
     this.gridLayer.setDepth(10);
 
     const startCell = this.findCell(grid, "S") || this.findSafeLand(grid);
-    const finishCell = this.findGoalCell(grid, startCell);
+    const finishCell = this.ensureFinishInside(grid, this.findCell(grid, "F"), startCell);
 
     const sx = startCell.x*CELL + CELL/2;
     const sy = startCell.y*CELL + CELL/2;
@@ -518,29 +543,28 @@ class MainScene extends Phaser.Scene {
     const fy = finishCell.y*CELL + CELL/2;
 
     this.landLayer.add(this.add.rectangle(sx, sy, CELL*0.92, 10, 0xffffff, 1));
-    this.landLayer.add(this.add.rectangle(fx, fy, CELL*0.78, CELL*0.78, 0xf7e65e, 0.92).setStrokeStyle(2, 0xffffff, 0.8));
+    this.landLayer.add(this.add.rectangle(fx, fy, CELL*0.92, 8, 0x4ea3ff, 1));
 
-    this.finishZone = this.add.zone(fx, fy, CELL*0.78, CELL*0.78);
+    this.finishZone = this.add.zone(fx, fy, CELL*0.92, CELL*0.92);
     this.physics.add.existing(this.finishZone, true);
 
     const landCells = [];
-    for (let y=1; y<rows-1; y++) {
-      for (let x=1; x<cols-1; x++) {
-        if (grid[y][x] === "#") landCells.push({x,y});
-      }
+    for (let y=0; y<rows; y++){
+      for (let x=0; x<cols; x++) if (grid[y][x] === "#") landCells.push({x,y});
     }
     Phaser.Utils.Array.Shuffle(landCells);
-    const obsCount = Math.min(8, Math.floor(landCells.length * 0.06));
-    for (let i=0; i<obsCount; i++) {
+    const obsCount = Math.min(10, Math.floor(landCells.length * 0.08));
+    for (let i=0; i<obsCount; i++){
       const c = landCells[i];
       if (!c) continue;
-      if ((c.x === startCell.x && c.y === startCell.y) || (c.x === finishCell.x && c.y === finishCell.y)) continue;
+      if (c.x === startCell.x && c.y === startCell.y) continue;
+      if (c.x === finishCell.x && c.y === finishCell.y) continue;
       const ox = c.x*CELL + CELL/2;
       const oy = c.y*CELL + CELL/2;
-      const block = this.add.rectangle(ox, oy, 64, 26, 0xd99a22, 1);
-      block.setRotation(i % 2 === 0 ? 0 : Math.PI/2);
-      this.physics.add.existing(block, true);
-      this.obstacles.add(block);
+      const r = this.add.rectangle(ox, oy, 70, 30, 0xffb020, 1);
+      r.setRotation((i%2===0)?0:Math.PI/2);
+      this.physics.add.existing(r, true);
+      this.obstacles.add(r);
     }
 
     const baseW = 34, baseH = 54;
@@ -551,33 +575,55 @@ class MainScene extends Phaser.Scene {
     this.car.setTint(this.selectedCar.color);
     this.car.setDisplaySize(baseW*wMul, baseH*hMul);
     this.car.body.setSize(baseW*wMul, baseH*hMul, true);
-    this.car.setDrag(300, 300);
+    this.car.setDrag(320, 320);
     this.car.setCollideWorldBounds(true);
     this.car.body.setMaxVelocity(this.selectedCar.maxSpeed, this.selectedCar.maxSpeed);
     this.car.body.setAngularVelocity(0);
-    this.car.rotation = 0;
 
     this.physics.add.collider(this.car, this.wallGroup, ()=>this.onCrash(), null, this);
     this.physics.add.collider(this.car, this.obstacles, ()=>this.onCrash(), null, this);
     this.physics.add.overlap(this.car, this.finishZone, ()=>this.onFinish(), null, this);
 
-    this.cameras.main.setBounds(0, 0, this.worldW, this.worldH);
-    this.cameras.main.startFollow(this.car, true, 0.16, 0.16);
-    this.cameras.main.setDeadzone(52, 72);
+    this.cameras.main.setBounds(0,0,this.worldW,this.worldH);
+    this.attachCameraToCar();
   }
 
   startGame(){
     this.money = 0;
-    this.finishTriggered = false;
     this.steer = 0;
     this.wheel.active = false;
-    this.cameraDrag.active = false;
-    this.touch.gas = false;
-    this.rotateWheelVisual(-Math.PI/2);
+    this.wheel.id = null;
+    this.dragPointerId = null;
+    this.dragLast = null;
+    this.pinch.active = false;
+    this.wheelKnob.setPosition(this.wheel.cx, this.wheel.cy - (this.wheel.r-16));
 
     this.buildWorld(this.selectedMap);
-    this.uiInfo.setText(`Mapa: ${this.selectedMap.name} • Auto: ${this.selectedCar.name}`);
     this.setState("playing");
+  }
+
+  playWinSound(){
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      if (!this.audioCtx) this.audioCtx = new AudioCtx();
+      const ctx = this.audioCtx;
+      const now = ctx.currentTime;
+      const notes = [523.25, 659.25, 783.99, 1046.5];
+      notes.forEach((freq, i)=>{
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "triangle";
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(0.0001, now + i*0.11);
+        gain.gain.exponentialRampToValueAtTime(0.12, now + i*0.11 + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + i*0.11 + 0.10);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now + i*0.11);
+        osc.stop(now + i*0.11 + 0.11);
+      });
+    } catch(e) {}
   }
 
   onCrash(){
@@ -587,83 +633,49 @@ class MainScene extends Phaser.Scene {
   }
 
   onFinish(){
-    if (this.state !== "playing" || this.finishTriggered) return;
-    this.finishTriggered = true;
-
+    if (this.state !== "playing") return;
     this.money += RULES.finishReward;
     this.best = Math.max(this.best, this.money);
     this.playWinSound();
-
-    this.uiInfo.setText(`🏁 CIEĽ! Peniaze: ${this.money} (best: ${this.best})`);
+    this.uiInfo.setText(`🏁 CÍL! Peníze: ${this.money} (best: ${this.best})`);
     this.setState("menu");
-    this.setMenuStep("country");
-
     this.cameras.main.stopFollow();
     this.cameras.main.scrollX = 0;
     this.cameras.main.scrollY = 0;
-
-    this.time.delayedCall(120, ()=>{
-      this.clearWorld();
-      this.finishTriggered = false;
-    });
+    this.cameras.main.setZoom(1);
+    this.clearWorld();
   }
 
-  playWinSound(){
-    const ctx = this.sound.context;
-    if (!ctx) return;
-
-    const now = ctx.currentTime;
-    const notes = [523.25, 659.25, 783.99, 1046.5];
-    notes.forEach((freq, i)=>{
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = "triangle";
-      osc.frequency.setValueAtTime(freq, now + i*0.08);
-      gain.gain.setValueAtTime(0.0001, now + i*0.08);
-      gain.gain.exponentialRampToValueAtTime(0.08, now + i*0.08 + 0.01);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + i*0.08 + 0.18);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(now + i*0.08);
-      osc.stop(now + i*0.08 + 0.2);
-    });
-  }
-
-  update(_, delta){
+  update(){
     this.uiMoney.setText(`Peníze: ${this.money}`);
     if (this.state !== "playing" || !this.car) return;
 
-    const dt = delta / 1000;
     const gas = this.touch.gas || this.cursors.up.isDown;
-
     let kbSteer = 0;
     if (this.cursors.left.isDown) kbSteer -= 1;
     if (this.cursors.right.isDown) kbSteer += 1;
 
-    const steer = clamp(this.wheel.active ? this.steer : (kbSteer !== 0 ? kbSteer : 0), -1, 1);
-    const speed = this.car.body.speed || 0;
-    const speedN = clamp(speed / (this.selectedCar.maxSpeed * 0.22), 0, 1);
+    let steer = clamp(this.steer + kbSteer, -1, 1);
 
-    if (speed > 2) {
-      const turnRate = 3.35;
-      this.car.rotation += steer * turnRate * dt * speedN;
+    if (!this.wheel.active && kbSteer === 0){
+      this.steer = Phaser.Math.Linear(this.steer, 0, 0.22);
+      steer = this.steer;
     }
 
-    this.car.body.setAngularVelocity(0);
+    if (Math.abs(steer) > 0.01 || gas){
+      this.attachCameraToCar();
+    }
 
-    if (gas) {
-      const angleDeg = (this.car.rotation * 180 / Math.PI) - 90;
-      const desired = new Phaser.Math.Vector2();
-      this.physics.velocityFromAngle(angleDeg, this.selectedCar.maxSpeed, desired);
-      const accelLerp = clamp((this.selectedCar.accel || 560) / 720, 0.18, 0.34);
-      this.car.body.velocity.x = Phaser.Math.Linear(this.car.body.velocity.x, desired.x, accelLerp);
-      this.car.body.velocity.y = Phaser.Math.Linear(this.car.body.velocity.y, desired.y, accelLerp);
-      this.cameras.main.startFollow(this.car, true, 0.16, 0.16);
-      this.cameraDrag.active = false;
-    } else if (speed < 12 && this.cameraDrag.active) {
-      this.cameras.main.stopFollow();
-    } else if (!this.cameraDrag.active) {
-      this.cameras.main.startFollow(this.car, true, 0.16, 0.16);
+    const turnSpeed = 190;
+    this.car.body.setAngularVelocity(steer * turnSpeed);
+
+    if (gas){
+      const angleDeg = (this.car.rotation * 180/Math.PI) - 90;
+      const v = new Phaser.Math.Vector2();
+      this.physics.velocityFromAngle(angleDeg, this.selectedCar.maxSpeed, v);
+      const a = clamp((this.selectedCar.accel || 520) / 800, 0.05, 0.18);
+      this.car.body.velocity.x = Phaser.Math.Linear(this.car.body.velocity.x, v.x, a);
+      this.car.body.velocity.y = Phaser.Math.Linear(this.car.body.velocity.y, v.y, a);
     }
   }
 
@@ -675,22 +687,6 @@ class MainScene extends Phaser.Scene {
     g.generateTexture(key, w, h);
     g.destroy();
   }
-
-  makeCarTexture(key, w, h){
-    if (this.textures.exists(key)) return;
-    const g = this.add.graphics();
-    g.fillStyle(0xffffff, 1);
-    g.fillRoundedRect(4, 2, w-8, h-4, 10);
-    g.fillStyle(0x4d4d4d, 1);
-    g.fillRoundedRect(9, 10, w-18, h-20, 7);
-    g.fillStyle(0x1a1a1a, 1);
-    g.fillCircle(8, 12, 4);
-    g.fillCircle(w-8, 12, 4);
-    g.fillCircle(8, h-12, 4);
-    g.fillCircle(w-8, h-12, 4);
-    g.generateTexture(key, w, h);
-    g.destroy();
-  }
 }
 
 new Phaser.Game({
@@ -698,7 +694,7 @@ new Phaser.Game({
   parent: "wrap",
   width: VIEW_W,
   height: VIEW_H,
-  backgroundColor: "#07111c",
+  backgroundColor: "#111",
   physics: { default: "arcade", arcade: { debug: false } },
   scene: [MainScene],
   scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH }
