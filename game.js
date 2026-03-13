@@ -76,6 +76,7 @@ class MainScene extends Phaser.Scene {
     this.input.topOnly = true;
 
     this.buildHud();
+    this.updateWheelVisualFromSteer();
     this.buildMenu();
 
     this.physics.world.setBounds(0, 0, VIEW_W, VIEW_H);
@@ -109,23 +110,18 @@ class MainScene extends Phaser.Scene {
     this.uiDebug = this.add.text(12, 98, '', { fontSize:'12px', color:'#ffd6d6', wordWrap:{ width: 360 } })
       .setScrollFactor(0).setDepth(2000);
 
-    // Pôvodný fungujúci plyn z nahraného game.js
-    this.gasBtn = this.add.rectangle(VIEW_W-90, VIEW_H-80, 110, 110, 0x000000, 0.35)
+    this.gasBtn = this.add.circle(VIEW_W - 72, VIEW_H - 92, 52, 0x0d1017, 0.55)
       .setInteractive().setScrollFactor(0).setDepth(2000);
-    this.gasTxt = this.add.text(VIEW_W-90, VIEW_H-80, '⛽', { fontSize:'34px', color:'#fff' })
+    this.gasInner = this.add.circle(VIEW_W - 72, VIEW_H - 92, 40, 0x2bdc4a, 0.18)
+      .setScrollFactor(0).setDepth(2001);
+    this.gasTxt = this.add.text(VIEW_W - 72, VIEW_H - 92, '⛽', { fontSize:'28px', color:'#ffffff' })
       .setOrigin(0.5).setScrollFactor(0).setDepth(2002);
-    this.gasInner = this.add.circle(VIEW_W-90, VIEW_H-80, 42, 0x2bdc4a, 0.14)
-      .setScrollFactor(0).setDepth(2001);
 
-    // Pôvodný fungujúci volant z nahraného game.js
-    this.wheel.cx = 110;
-    this.wheel.cy = VIEW_H - 95;
-    this.wheel.r = 70;
-    this.wheelBase = this.add.circle(this.wheel.cx, this.wheel.cy, this.wheel.r, 0x000000, 0.30)
+    this.wheelBase = this.add.circle(this.wheel.cx, this.wheel.cy, this.wheel.r, 0x0d1017, 0.60)
       .setScrollFactor(0).setDepth(2000);
-    this.wheelRing = this.add.circle(this.wheel.cx, this.wheel.cy, this.wheel.r-10, 0xffffff, 0.06)
+    this.wheelRing = this.add.circle(this.wheel.cx, this.wheel.cy, this.wheel.r - 10, 0xffffff, 0.08)
       .setScrollFactor(0).setDepth(2001);
-    this.wheelKnob = this.add.circle(this.wheel.cx, this.wheel.cy - (this.wheel.r-16), 12, 0xffffff, 0.18)
+    this.wheelKnob = this.add.circle(this.wheel.cx, this.wheel.cy - (this.wheel.r - 14), 11, 0xffffff, 0.22)
       .setScrollFactor(0).setDepth(2002);
 
     this.gasBtn.on('pointerdown', ()=> this.touch.gas = true);
@@ -363,25 +359,30 @@ class MainScene extends Phaser.Scene {
   }
 
   isPointerOnGas(p){
-    return Math.abs(p.x - (VIEW_W - 90)) <= 55 && Math.abs(p.y - (VIEW_H - 80)) <= 55;
+    return Phaser.Math.Distance.Between(p.x, p.y, VIEW_W - 72, VIEW_H - 92) <= 52;
   }
 
   updateWheelFromPointer(p){
     const dx = p.x - this.wheel.cx;
     const dy = p.y - this.wheel.cy;
-    const r = this.wheel.r - 16;
-    const len = Math.hypot(dx, dy) || 1;
+    const r = this.wheel.r - 14;
+    const len = Math.max(1, Math.hypot(dx, dy));
     const nx = dx / len;
     const ny = dy / len;
-    this.wheelKnob.setPosition(this.wheel.cx + nx*r, this.wheel.cy + ny*r);
+    this.wheelKnob.setPosition(this.wheel.cx + nx * r, this.wheel.cy + ny * r);
     this.steer = clamp(dx / this.wheel.r, -1, 1);
   }
 
   releaseWheel(){
     this.wheel.active = false;
     this.wheel.id = null;
-    this.steer = 0;
-    this.wheelKnob.setPosition(this.wheel.cx, this.wheel.cy - (this.wheel.r-16));
+  }
+
+  updateWheelVisualFromSteer(){
+    const r = this.wheel.r - 14;
+    const x = this.wheel.cx + this.steer * r;
+    const y = this.wheel.cy - r * (1 - Math.abs(this.steer) * 0.18);
+    this.wheelKnob.setPosition(x, y);
   }
 
   updatePinchState(){
@@ -478,7 +479,7 @@ class MainScene extends Phaser.Scene {
     this.uiInfo.setText('Spúšťam hru…');
     if (this.menuDebugText) this.menuDebugText.setText('Spúšťam hru…');
     const steps = [
-      () => { this.logStartStep('1/9 reset stavu'); this.money = 0; this.touch.gas = false; this.releaseWheel(); this.manualCamera = true; this.gameStartedDriving = false; this.finishedRound = false; this.mapBrowse.active = false; this.mapBrowse.pointerId = null; this.mapBrowse.pinch = false; },
+      () => { this.logStartStep('1/9 reset stavu'); this.money = 0; this.touch.gas = false; this.steer = 0; this.releaseWheel(); this.updateWheelVisualFromSteer(); this.manualCamera = true; this.gameStartedDriving = false; this.finishedRound = false; this.mapBrowse.active = false; this.mapBrowse.pointerId = null; this.mapBrowse.pinch = false; },
       () => { this.logStartStep('2/9 vypnutie inputu menu'); this.setMenuInteractive(false); },
       () => { this.logStartStep('3/9 skrytie menu'); this.menuRoot.setVisible(false); this.menuRoot.setAlpha(0); },
       () => { this.logStartStep('4/9 mazanie stareho sveta'); this.clearWorld(); },
@@ -578,7 +579,9 @@ class MainScene extends Phaser.Scene {
     try {
       this.money = 0;
       this.touch.gas = false;
+      this.steer = 0;
       this.releaseWheel();
+      this.updateWheelVisualFromSteer();
       this.manualCamera = true;
       this.gameStartedDriving = false;
       this.finishedRound = false;
@@ -719,7 +722,9 @@ class MainScene extends Phaser.Scene {
       this.car.body.enable = false;
     }
     this.touch.gas = false;
+    this.steer = 0;
     this.releaseWheel();
+    this.updateWheelVisualFromSteer();
     this.manualCamera = true;
     this.gameStartedDriving = false;
     this.setState('menu');
@@ -736,10 +741,9 @@ class MainScene extends Phaser.Scene {
     if (this.cursors.right.isDown) kbSteer += 1;
 
     let steer = clamp(this.steer + kbSteer, -1, 1);
-    if (!this.wheel.active && kbSteer === 0){
-      this.steer = lerp(this.steer, 0, 0.14);
-      steer = this.steer;
-      this.wheelKnob.setPosition(this.wheel.cx + this.steer * (this.wheel.r - 16), this.wheel.cy - (this.wheel.r - 16) * (1 - Math.abs(this.steer) * 0.18));
+    if (kbSteer !== 0){
+      this.steer = steer;
+      this.updateWheelVisualFromSteer();
     }
 
     if ((gas || Math.abs(steer) > 0.12) && !this.gameStartedDriving){
@@ -749,7 +753,8 @@ class MainScene extends Phaser.Scene {
 
     const speed = this.car.body.speed || 0;
     const speedN = clamp(speed / this.selectedCar.maxSpeed, 0, 1);
-    const angVel = steer * 260 * speedN;
+    const turnFactor = gas ? Math.max(0.22, speedN) : speedN;
+    const angVel = steer * 300 * turnFactor;
     this.car.body.setAngularVelocity(angVel);
 
     if (gas){
