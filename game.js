@@ -62,6 +62,7 @@ class MainScene extends Phaser.Scene {
     this.gameStartedDriving = false;
     this.minZoom = 0.7;
     this.maxZoom = 2.2;
+    this.finishedRound = false;
   }
 
   create(){
@@ -82,7 +83,7 @@ class MainScene extends Phaser.Scene {
   createTextures(){
     this.makeTileTexture('tex_ocean', CELL, CELL, 0x3f86d9, 0x2a6fbe);
     this.makeTileTexture('tex_land', CELL, CELL, 0x61b15a, 0x4d9647);
-    this.makeFinishTexture('tex_finish', CELL, CELL);
+    this.makeFinishFlagTexture('tex_finish', CELL, CELL);
     this.makeCarTexture('car_taxi', 60, 92, 0xffd800, 0x111111, false);
     this.makeCarTexture('car_moto', 40, 84, 0xff4fa3, 0xffffff, true);
     this.makeCarTexture('car_auto', 60, 92, 0xf6f6f6, 0x2c7be5, false);
@@ -135,11 +136,11 @@ class MainScene extends Phaser.Scene {
       const x = 78 + i * 118;
       const y = 205;
       const card = this.add.container(x, y);
-      const bg = this.add.rectangle(0,0, 88, 110, 0x102030, 1).setStrokeStyle(2, 0x254765, 1).setInteractive({ useHandCursor:true });
+      const bg = this.add.rectangle(0,0, 88, 110, 0x5ea7ea, 1).setStrokeStyle(2, 0xbfdfff, 1).setInteractive({ useHandCursor:true });
       const imgKey = car.id === 'taxi' ? 'car_taxi' : car.id === 'moto' ? 'car_moto' : 'car_auto';
       const icon = this.add.image(0, -16, imgKey).setScale(0.48);
-      const name = this.add.text(0, 36, car.name, { fontSize:'13px', color:'#ffffff' }).setOrigin(0.5);
-      const stat = this.add.text(0, 54, `max ${car.maxSpeed}`, { fontSize:'11px', color:'#b8d9ff' }).setOrigin(0.5);
+      const name = this.add.text(0, 36, car.name, { fontSize:'13px', color:'#08345f', fontStyle:'bold' }).setOrigin(0.5);
+      const stat = this.add.text(0, 54, `max ${car.maxSpeed}`, { fontSize:'11px', color:'#0d4f8c' }).setOrigin(0.5);
       bg.on('pointerdown', ()=>{
         this.carIndex = i;
         this.selectedCar = CARS[i];
@@ -161,8 +162,9 @@ class MainScene extends Phaser.Scene {
     this.europeWrap = this.add.container(w/2, 455);
     this.europeBg = this.add.rectangle(0, 0, 296, 176, 0x0a1724, 1).setStrokeStyle(2, 0x265582, 1);
     this.europeImage = this.add.image(0, 0, 'atlas_europe');
-    this.sloveniaHit = this.add.zone(46, 36, 38, 22).setInteractive({ useHandCursor:true });
-    this.sloveniaGlow = this.add.rectangle(46, 36, 44, 28, 0xffd94d, 0.16).setStrokeStyle(2, 0xffe77a, 1);
+    this.sloveniaHit = this.add.zone(44, 34, 54, 28).setInteractive({ useHandCursor:true });
+    this.sloveniaGlow = this.add.graphics();
+    this.drawSloveniaOutline(this.sloveniaGlow, 44, 34, 0xfff0a0, 0xffd94d);
     this.siLabel = this.add.text(46, 58, 'Slovinsko', { fontSize:'11px', color:'#fff7bf' }).setOrigin(0.5);
 
     this.lockedMarks = [];
@@ -219,8 +221,8 @@ class MainScene extends Phaser.Scene {
   refreshMenuSelection(){
     this.carCards.forEach((entry, idx)=>{
       const selected = idx === this.carIndex;
-      entry.bg.setFillStyle(selected ? 0x2e7ed3 : 0x102030, 1);
-      entry.bg.setStrokeStyle( selected ? 3 : 2, selected ? 0xb6dbff : 0x254765, 1 );
+      entry.bg.setFillStyle(selected ? 0x2e7ed3 : 0x5ea7ea, 1);
+      entry.bg.setStrokeStyle( selected ? 3 : 2, selected ? 0xeaf5ff : 0xbfdfff, 1 );
     });
     const mapName = this.selectedMap ? this.selectedMap.name : '—';
     this.selectionText.setText(`Auto: ${this.selectedCar.name}   •   Mapa: ${mapName}`);
@@ -232,17 +234,26 @@ class MainScene extends Phaser.Scene {
     const isPlaying = state === 'playing';
 
     this.menuRoot.setVisible(isMenu);
+    this.menuRoot.iterate(obj => {
+      if (!obj || !obj.input) return;
+      if (isMenu) obj.setInteractive(obj.input.hitArea ? { useHandCursor:true } : undefined);
+      else obj.disableInteractive();
+    });
+    [this.btnStart, this.btnStartTxt, this.europeHit, this.backToWorld, this.sloveniaHit].forEach(obj=>{
+      if (!obj) return;
+      if (isMenu) obj.setInteractive({ useHandCursor:true });
+      else obj.disableInteractive();
+    });
+    this.carCards.forEach(entry=>{
+      if (isMenu) entry.bg.setInteractive({ useHandCursor:true });
+      else entry.bg.disableInteractive();
+    });
 
     [this.gasBtn, this.gasInner, this.gasTxt, this.wheelBase, this.wheelRing, this.wheelKnob, this.uiMoney, this.uiInfo].forEach(o=>o.setVisible(isPlaying));
 
-    if (isMenu){
-      this.uiMoney.setText(`Peníze: ${this.money}`);
-      this.uiInfo.setText('');
-      this.uiTitle.setText('Soferujeme 4');
-    } else {
-      this.uiTitle.setText('Soferujeme 4');
-      this.uiInfo.setText('');
-    }
+    this.uiMoney.setText(`Peníze: ${this.money}`);
+    this.uiTitle.setText('Soferujeme 4');
+    if (!isPlaying) this.uiInfo.setText('');
   }
 
   registerInputs(){
@@ -517,9 +528,12 @@ class MainScene extends Phaser.Scene {
     this.releaseWheel();
     this.manualCamera = true;
     this.gameStartedDriving = false;
+    this.clearWorld();
+    this.finishedRound = false;
     this.buildWorld(this.selectedMap);
     this.setState('playing');
     this.uiInfo.setText('');
+    this.input.setDefaultCursor('default');
   }
 
   engageCarCamera(){
@@ -554,33 +568,27 @@ class MainScene extends Phaser.Scene {
     const ctx = this.sound.context;
     if (!ctx) return;
     const now = ctx.currentTime;
-    const notes = [523.25, 659.25, 783.99, 880.0, 783.99, 659.25, 698.46, 783.99, 1046.5];
-    notes.forEach((freq, i)=>{
-      const t = now + i * 0.28;
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      const wobble = ctx.createOscillator();
-      const wobbleGain = ctx.createGain();
-      osc.type = i % 3 === 0 ? 'triangle' : 'sine';
-      osc.frequency.setValueAtTime(freq, t);
-      wobble.type = 'sine';
-      wobble.frequency.setValueAtTime(5.5, t);
-      wobbleGain.gain.setValueAtTime(8, t);
-      wobble.connect(wobbleGain).connect(osc.frequency);
-      gain.gain.setValueAtTime(0.0001, t);
-      gain.gain.exponentialRampToValueAtTime(0.095, t + 0.05);
-      gain.gain.exponentialRampToValueAtTime(0.05, t + 0.18);
-      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.34);
-      osc.connect(gain).connect(ctx.destination);
-      osc.start(t);
-      wobble.start(t);
-      osc.stop(t + 0.36);
-      wobble.stop(t + 0.36);
+    const melody = [523.25, 659.25, 783.99, 1046.5, 880.0, 783.99, 659.25, 698.46, 783.99, 880.0, 1046.5, 1174.66];
+    melody.forEach((freq, i)=>{
+      const t = now + i * 0.42;
+      ['triangle','sine'].forEach((type, layer)=>{
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(layer === 0 ? freq : freq * 2, t);
+        gain.gain.setValueAtTime(0.0001, t);
+        gain.gain.exponentialRampToValueAtTime(layer === 0 ? 0.08 : 0.03, t + 0.08);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.55);
+        osc.connect(gain).connect(ctx.destination);
+        osc.start(t);
+        osc.stop(t + 0.58);
+      });
     });
   }
 
   onFinish(){
-    if (this.state !== 'playing') return;
+    if (this.state !== 'playing' || this.finishedRound) return;
+    this.finishedRound = true;
     this.playWinSound();
     this.money += RULES.finishReward;
     this.best = Math.max(this.best, this.money);
@@ -589,16 +597,15 @@ class MainScene extends Phaser.Scene {
     if (this.car?.body){
       this.car.body.setVelocity(0, 0);
       this.car.body.setAngularVelocity(0);
+      this.car.body.enable = false;
     }
     this.touch.gas = false;
     this.releaseWheel();
     this.manualCamera = true;
     this.gameStartedDriving = false;
-    this.time.delayedCall(180, ()=>{
-      this.setState('menu');
-      this.refreshMenuSelection();
-      this.mapHint.setText('Hotovo! Môžeš zvoliť auto/mapu alebo stlačiť ŠTART znova');
-    });
+    this.setState('menu');
+    this.refreshMenuSelection();
+    this.mapHint.setText('Hotovo! Auto ostalo v cieli. Môžeš zmeniť auto alebo stlačiť ŠTART znova');
   }
 
   update(){
@@ -649,19 +656,31 @@ class MainScene extends Phaser.Scene {
     g.destroy();
   }
 
-  makeFinishTexture(key, w, h){
+  makeFinishFlagTexture(key, w, h){
     if (this.textures.exists(key)) return;
     const g = this.add.graphics();
-    const size = w/4;
-    for (let yy = 0; yy < 4; yy++){
-      for (let xx = 0; xx < 4; xx++){
-        g.fillStyle((xx + yy) % 2 === 0 ? 0xffffff : 0x222222, 1);
-        g.fillRect(xx * size, yy * size, size, size);
-      }
-    }
-    g.lineStyle(2, 0x4ea3ff, 1).strokeRect(1, 1, w - 2, h - 2);
+    g.lineStyle(4, 0x8b5a2b, 1).lineBetween(w*0.25, h*0.92, w*0.25, h*0.12);
+    g.fillStyle(0xffd84d, 1);
+    g.fillRoundedRect(w*0.28, h*0.14, w*0.46, h*0.30, 6);
+    g.fillStyle(0xff6b6b, 1).fillCircle(w*0.38, h*0.29, 4).fillCircle(w*0.58, h*0.25, 4);
+    g.fillStyle(0xffffff, 0.95).fillCircle(w*0.50, h*0.34, 4);
     g.generateTexture(key, w, h);
     g.destroy();
+  }
+
+  drawSloveniaOutline(g, cx, cy, stroke, fill){
+    g.clear();
+    g.fillStyle(fill, 0.22);
+    g.lineStyle(2, stroke, 1);
+    const pts = [
+      [-22, -3],[-17,-8],[-10,-10],[-2,-12],[8,-10],[15,-7],[22,-2],[20,3],[12,7],[4,8],[-3,11],[-12,10],[-18,6],[-22,1]
+    ];
+    g.beginPath();
+    g.moveTo(cx + pts[0][0], cy + pts[0][1]);
+    for (let i=1;i<pts.length;i++) g.lineTo(cx + pts[i][0], cy + pts[i][1]);
+    g.closePath();
+    g.fillPath();
+    g.strokePath();
   }
 
   makeCarTexture(key, w, h, bodyColor, stripeColor, moto=false){
@@ -734,7 +753,12 @@ class MainScene extends Phaser.Scene {
     poly([[156,62],[188,54],[220,64],[234,82],[226,104],[198,106],[176,94],[162,82]], 0x73c76f);
     poly([[110,28],[126,18],[150,18],[160,34],[150,44],[128,42]], 0x79cf72);
     poly([[142,138],[156,136],[166,146],[164,160],[150,162],[142,152]], 0x69bf63);
-    g.lineStyle(2, 0xfff18c, 1).strokeRoundedRect(147, 99, 34, 24, 5);
+    g.fillStyle(0xffe069, 0.28);
+    g.lineStyle(2, 0xfff18c, 1);
+    g.beginPath();
+    g.moveTo(150, 106); g.lineTo(156, 101); g.lineTo(164, 99); g.lineTo(172, 101); g.lineTo(179, 104); g.lineTo(184, 108); g.lineTo(182, 113); g.lineTo(174, 116); g.lineTo(166, 116); g.lineTo(159, 119); g.lineTo(152, 117); g.lineTo(148, 112); g.closePath();
+    g.fillPath();
+    g.strokePath();
     g.generateTexture(key, w, h);
     g.destroy();
   }
