@@ -1,725 +1,755 @@
+// Ostrov Shooter (MVP) — Phaser 3
+// NOVÝ prístup: BULLETS bez fyziky (ručný pohyb) => 100% budú lietať.
+// - Multi-touch
+// - Player môže po vode, zombie nie
+// - Voda neblokuje náboje
+// - Stromy blokujú náboje (tile check)
+// - Zásah zombie = AABB hitbox
 
-// Šoférujeme 4 — Phaser 3
-// Rebuilt from the original controls so the wheel + gas behave like the old version.
-// Focus of this version:
-// - stable start
-// - original steering wheel + gas restored
-// - car cards use the same blue as the map (#2E7ED3)
-// - finish is always placed on valid driveable land, far from start
-// - one-finger pan and two-finger pinch zoom while car is standing still
-// - camera snaps back only after gas or steering input
-
+const TILE = 22;
+const MAP_W = 29;
+const MAP_H = 35;
 const VIEW_W = 390;
 const VIEW_H = 780;
-const CELL = 32;
 
 const COLORS = {
-  bg: 0x061626,
-  panel: 0x061626,
-  panelBorder: 0x2E7ED3,
-  ocean: 0x2E7ED3,
-  land: 0x76C26A,
-  card: 0x2E7ED3,
-  cardSelected: 0x58A5F3,
-  cardBorder: 0x86C0FF,
-  text: '#ffffff',
-  subtext: '#d8ebff',
+  bg: 0x0f0f10,
+  grass: 0x4aa34a,
+  sand: 0xd9c47c,
+  water: 0x3b6eea,
+  tree: 0x1e6b2e,
+  trunk: 0x8b5a2b,
+  player: 0xffffff,
+  enemy: 0x7cff70,
+  red: 0xff3b30,
+  bullet: 0xffd800,
+  mine: 0xff7a00
 };
 
-const CARS = [
-  { id:'taxi',    name:'Taxi',    color:0xffd800, maxSpeed:230, accel:520, widthMul:1.0, heightMul:1.0 },
-  { id:'motorka', name:'Motorka', color:0xff69b4, maxSpeed:280, accel:560, widthMul:0.55, heightMul:0.85 },
-  { id:'auto',    name:'Auto',    color:0xffffff, maxSpeed:240, accel:520, widthMul:1.0, heightMul:1.0 },
+const WEAPONS = [
+  { id:"pistol",  name:"Pištoľ",     desc:"Stredná rýchlosť, presná", fireRateMs: 260, bullets:1, spreadDeg:2,  speed:620, damage:22 },
+  { id:"shotgun", name:"Brokovnica", desc:"Pomaly, ale veľa peliet",  fireRateMs: 700, bullets:6, spreadDeg:18, speed:560, damage:12 },
+  { id:"smg",     name:"Samopal",    desc:"Rýchlo, menej presné",     fireRateMs: 120, bullets:1, spreadDeg:10, speed:650, damage:15 },
+  { id:"mine",    name:"Míny",       desc:"Mina zostane ležať a zabije zombie pri priblížení", fireRateMs: 420, bullets:1, spreadDeg:0, speed:0, damage:999, mine:true }
 ];
 
-// Stylized but tighter Slovenia-like grid.
-// # = driveable land, S = start land
-const MAPS = {
-  si: { id:'si', name:'Slovinsko', grid: [
-    '..........................',
-    '..........................',
-    '..........................',
-    '...........####...........',
-    '.........#########........',
-    '.......#############......',
-    '......###############.....',
-    '.....#################....',
-    '....###################...',
-    '....####################..',
-    '...#####################..',
-    '...####################...',
-    '....##################....',
-    '.....#################....',
-    '......###############.....',
-    '.......##############.....',
-    '........###########.......',
-    '.........#########........',
-    '..........#####..........',
-    '...........###............',
-    '............S.............',
-    '..........................',
-    '..........................',
-    '..........................'
-  ]}
-};
-
 function clamp(v, a, b){ return Math.max(a, Math.min(b, v)); }
+function degToRad(d){ return d * Math.PI / 180; }
+function randChoice(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
+function isFiniteNum(x){ return Number.isFinite(x) && !Number.isNaN(x); }
+
+// AABB overlap (axis-aligned bounding boxes)
+function aabbOverlap(ax, ay, aw, ah, bx, by, bw, bh){
+  return Math.abs(ax - bx) * 2 < (aw + bw) && Math.abs(ay - by) * 2 < (ah + bh);
+}
 
 class MainScene extends Phaser.Scene {
-  constructor(){ super('main'); }
+  constructor(){ super("main"); }
 
   init(){
-    this.state = 'menu';
-    this.money = 0;
-    this.best = 0;
+    this.state = "menu";
+    this.weaponIndex = 0;
+    this.weapon = WEAPONS[this.weaponIndex];
 
-    this.selectedCarIndex = 0;
-    this.selectedCar = CARS[0];
-    this.selectedMap = MAPS.si;
+    this.hpMax = 100;
+    this.hp = this.hpMax;
+    this.score = 0;
+    this.wave = 1;
 
-    this.steer = 0;
-    this.touch = { gas:false };
-    this.wheel = { active:false, id:null, cx:92, cy:VIEW_H-92, r:70 };
+    this.fireCooldown = 0;
 
-    this.dragPan = {
-      active:false, id:null, startX:0, startY:0, camX:0, camY:0
+    this.lastAim = new Phaser.Math.Vector2(1, 0);
+
+    this.touch = {
+      left:  { active:false, id:null, basePos:null, vec:new Phaser.Math.Vector2(0,0) },
+      right: { active:false, id:null, basePos:null, vec:new Phaser.Math.Vector2(0,0) },
+      firing:false
     };
-    this.pinch = {
-      active:false, ids:[], startDist:0, startZoom:1, midX:0, midY:0
-    };
-    this.cameraDetached = false;
-    this.starting = false;
+
+    this._tmp = new Phaser.Math.Vector2();
+    this._aim = new Phaser.Math.Vector2(1,0);
+
+    // Manual bullets list
+    this.bullets = [];
+    this.MAX_BULLETS = 220;
   }
 
   create(){
-    document.title = 'Šoférujeme 4';
+    const w = this.scale.width;
+    const h = this.scale.height;
 
-    this.makeCarTexture();
-    this.makeFlagTexture();
+    this.input.addPointer(2);
 
-    this.add.rectangle(VIEW_W/2, VIEW_H/2, VIEW_W, VIEW_H, COLORS.bg, 1);
+    this.add.rectangle(w/2, h/2, w, h, COLORS.bg);
 
-    this.buildTopUi();
-    this.buildControls();
+    // textures
+    this.makeSolidTexture("tex_player", COLORS.player, 14, 14);
+    this.makeSolidTexture("tex_enemy",  COLORS.enemy,  14, 14);
+    this.makeSolidTexture("tex_bullet", COLORS.bullet,  6,  6);
+    this.makeSolidTexture("tex_mine",   COLORS.mine,   10, 10);
+
+    this.worldW = MAP_W * TILE;
+    this.worldH = MAP_H * TILE;
+    this.physics.world.setBounds(0, 0, this.worldW, this.worldH);
+
+    this.treeBlocks  = this.physics.add.staticGroup(); // blocks player & enemies
+    this.waterBlocks = this.physics.add.staticGroup(); // blocks enemies only
+
+    this.spawnLand = [];
+    this.playerLand = [];
+
+    this.generateIslandMap();
+    this.renderMap();
+
+    // player (Arcade)
+    this.player = this.physics.add.sprite(0, 0, "tex_player");
+    this.player.setCollideWorldBounds(true);
+    this.player.setDrag(700, 700);
+    this.player.setMaxVelocity(240, 240);
+    this.player.body.setSize(14, 14, true);
+
+    // aim line
+    this.aimLine = this.add.line(0,0, 0,0, 0, -24, COLORS.bullet, 0.9).setOrigin(0.5);
+
+    // enemies (Arcade)
+    this.enemies = this.physics.add.group({ classType: Phaser.Physics.Arcade.Sprite });
+
+    // collisions
+    this.physics.add.collider(this.player, this.treeBlocks);
+    this.physics.add.collider(this.enemies, this.treeBlocks);
+//    this.physics.add.collider(this.enemies, this.waterBlocks); // zombie blocked by water
+
+    // enemy touch player
+    this.physics.add.overlap(this.player, this.enemies, (p, e)=>{
+      if (!e?.active) return;
+      if (!e.hitCd || e.hitCd <= 0){
+        e.hitCd = 650;
+        this.takeDamage(10);
+      }
+    });
+
+    // UI
+    this.uiHP     = this.add.text(10, 10,  "HP: 100", { fontSize:"16px", color:"#fff" }).setScrollFactor(0).setDepth(150);
+    this.uiScore  = this.add.text(10, 32,  "Skóre: 0", { fontSize:"16px", color:"#fff" }).setScrollFactor(0).setDepth(150);
+    this.uiWave   = this.add.text(10, 54,  "Vlna: 1",  { fontSize:"16px", color:"#fff" }).setScrollFactor(0).setDepth(150);
+    this.uiWeapon = this.add.text(10, 76,  "Zbraň: -", { fontSize:"16px", color:"#fff" }).setScrollFactor(0).setDepth(150);
+    this.uiHint   = this.add.text(10, 100, "Strieľanie: pravý joystick potiahni smerom", { fontSize:"14px", color:"#cfcfcf" }).setScrollFactor(0).setDepth(150);
+    this.uiInfo   = this.add.text(10, 124, "", { fontSize:"14px", color:"#cfcfcf" }).setScrollFactor(0).setDepth(150);
+
+    // Menu + joysticks
     this.buildMenu();
+    this.createJoysticks();
 
-    this.physics.world.setBounds(0, 0, VIEW_W, VIEW_H);
+    // input
+    this.input.on("pointerdown", (p)=> this.onPointerDown(p));
+    this.input.on("pointerup",   (p)=> this.onPointerUp(p));
+    this.input.on("pointermove", (p)=> this.onPointerMove(p));
 
-    this.installInputHandlers();
-    this.refreshMenuVisuals();
-    this.setState('menu');
-  }
+    this.keys = this.input.keyboard.addKeys("W,A,S,D,UP,DOWN,LEFT,RIGHT");
 
-  buildTopUi(){
-    this.uiTitle = this.add.text(VIEW_W/2, 18, 'Šoférujeme 4', {
-      fontSize:'18px', fontStyle:'bold', color:COLORS.text
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(900);
-
-    this.uiMoney = this.add.text(12, 46, 'Peníze: 0', {
-      fontSize:'16px', color:COLORS.text
-    }).setScrollFactor(0).setDepth(900);
-
-    this.uiInfo = this.add.text(12, 68, '', {
-      fontSize:'13px', color:'#d0e7ff'
-    }).setScrollFactor(0).setDepth(900);
-
-    this.debugTxt = this.add.text(12, 88, '', {
-      fontSize:'12px', color:'#9fe870'
-    }).setScrollFactor(0).setDepth(901);
-
-    this.uiLightBox = this.add.rectangle(VIEW_W-44, 56, 56, 56, 0x0e0e0e).setScrollFactor(0).setDepth(900);
-    this.lightDot = this.add.circle(VIEW_W-44, 56, 16, 0x2bdc4a).setScrollFactor(0).setDepth(901);
-  }
-
-  buildControls(){
-    // Original gas + wheel layout, restored from original file
-    this.gasBtn = this.add.rectangle(VIEW_W-90, VIEW_H-80, 110, 110, 0x000000, 0.35)
-      .setInteractive().setScrollFactor(0).setDepth(1000);
-    this.gasTxt = this.add.text(VIEW_W-90, VIEW_H-80, '⛽', { fontSize:'34px', color:'#fff' })
-      .setOrigin(0.5).setScrollFactor(0).setDepth(1001);
-
-    this.wheelBase = this.add.circle(this.wheel.cx, this.wheel.cy, this.wheel.r, 0x000000, 0.30)
-      .setScrollFactor(0).setDepth(1000);
-    this.wheelRing = this.add.circle(this.wheel.cx, this.wheel.cy, this.wheel.r-10, 0xffffff, 0.06)
-      .setScrollFactor(0).setDepth(1001);
-    this.wheelKnob = this.add.circle(this.wheel.cx, this.wheel.cy - (this.wheel.r-16), 12, 0xffffff, 0.18)
-      .setScrollFactor(0).setDepth(1002);
-
-    this.gasBtn.on('pointerdown', ()=> { if (this.state === 'playing') { this.touch.gas = true; this.resumeCameraFollow(); } });
-    this.gasBtn.on('pointerup', ()=> this.touch.gas = false);
-    this.gasBtn.on('pointerout', ()=> this.touch.gas = false);
-  }
-
-  installInputHandlers(){
-    this.cursors = this.input.keyboard.createCursorKeys();
-
-    this.input.on('pointerdown', (p)=>{
-      // wheel
-      if (this.state === 'playing') {
-        const dx = p.x - this.wheel.cx;
-        const dy = p.y - this.wheel.cy;
-        if (Math.hypot(dx,dy) <= this.wheel.r){
-          this.wheel.active = true;
-          this.wheel.id = p.id;
-          this.resumeCameraFollow();
-          this.updateWheelFromPointer(p);
-          return;
-        }
-      }
-
-      // pan / pinch only during playing
-      if (this.state !== 'playing') return;
-
-      const active = this.input.manager.pointers.filter(pp => pp.isDown);
-      if (active.length >= 2) {
-        const [a, b] = active;
-        this.beginPinch(a, b);
-        return;
-      }
-
-      if (!this.touch.gas) {
-        this.dragPan.active = true;
-        this.dragPan.id = p.id;
-        this.dragPan.startX = p.x;
-        this.dragPan.startY = p.y;
-        this.dragPan.camX = this.cameras.main.scrollX;
-        this.dragPan.camY = this.cameras.main.scrollY;
-        this.detachCamera();
-      }
-    });
-
-    this.input.on('pointermove', (p)=>{
-      if (this.state !== 'playing') return;
-
-      if (this.wheel.active && p.id === this.wheel.id){
-        this.updateWheelFromPointer(p);
-        return;
-      }
-
-      const active = this.input.manager.pointers.filter(pp => pp.isDown);
-      if (active.length >= 2){
-        const [a,b] = active;
-        this.updatePinch(a,b);
-        return;
-      }
-
-      if (this.dragPan.active && p.id === this.dragPan.id){
-        const cam = this.cameras.main;
-        cam.scrollX = this.dragPan.camX - (p.x - this.dragPan.startX) / cam.zoom;
-        cam.scrollY = this.dragPan.camY - (p.y - this.dragPan.startY) / cam.zoom;
-        this.clampCamera();
-      }
-    });
-
-    const releaseWheel = ()=>{
-      this.wheel.active = false;
-      this.wheel.id = null;
-      this.steer = 0;
-      this.wheelKnob.setPosition(this.wheel.cx, this.wheel.cy - (this.wheel.r-16));
-    };
-
-    this.input.on('pointerup', (p)=>{
-      if (this.wheel.active && p.id === this.wheel.id) releaseWheel();
-      if (this.dragPan.active && p.id === this.dragPan.id){
-        this.dragPan.active = false;
-        this.dragPan.id = null;
-      }
-      this.touch.gas = false;
-
-      const active = this.input.manager.pointers.filter(pp => pp.isDown);
-      if (active.length < 2){
-        this.pinch.active = false;
-        this.pinch.ids = [];
-      }
-    });
-
-    this.input.on('pointerupoutside', ()=>{
-      if (this.wheel.active) releaseWheel();
-      this.dragPan.active = false;
-      this.dragPan.id = null;
-      this.touch.gas = false;
-      this.pinch.active = false;
-      this.pinch.ids = [];
-    });
-  }
-
-  beginPinch(a, b){
-    this.detachCamera();
-    this.dragPan.active = false;
-    this.pinch.active = true;
-    this.pinch.ids = [a.id, b.id];
-    this.pinch.startDist = Phaser.Math.Distance.Between(a.x, a.y, b.x, b.y);
-    this.pinch.startZoom = this.cameras.main.zoom;
-    this.pinch.midX = (a.x + b.x) / 2;
-    this.pinch.midY = (a.y + b.y) / 2;
-  }
-
-  updatePinch(a, b){
-    if (!this.pinch.active) this.beginPinch(a,b);
-    const cam = this.cameras.main;
-    const dist = Phaser.Math.Distance.Between(a.x, a.y, b.x, b.y) || 1;
-    const factor = dist / (this.pinch.startDist || 1);
-    cam.zoom = clamp(this.pinch.startZoom * factor, 0.7, 2.2);
-    this.clampCamera();
-  }
-
-  detachCamera(){
-    if (this.cameraDetached || !this.car) return;
     this.cameras.main.stopFollow();
-    this.cameraDetached = true;
-    this.debug('kamera voľná');
+    this.cameras.main.scrollX = 0;
+    this.cameras.main.scrollY = 0;
+
+    this.refreshMenuWeapon();
+    this.setState("menu");
   }
 
-  resumeCameraFollow(){
-    if (!this.car) return;
-    this.cameras.main.zoom = 1;
-    this.cameras.main.startFollow(this.car, true, 0.12, 0.12);
-    this.cameras.main.setDeadzone(40, 60);
-    this.cameraDetached = false;
+  makeSolidTexture(key, color, w, h){
+    if (this.textures.exists(key)) return;
+    const g = this.add.graphics();
+    g.fillStyle(color, 1);
+    g.fillRect(0, 0, w, h);
+    g.generateTexture(key, w, h);
+    g.destroy();
   }
 
-  clampCamera(){
-    const cam = this.cameras.main;
-    const maxX = Math.max(0, this.worldW - VIEW_W / cam.zoom);
-    const maxY = Math.max(0, this.worldH - VIEW_H / cam.zoom);
-    cam.scrollX = clamp(cam.scrollX, 0, maxX);
-    cam.scrollY = clamp(cam.scrollY, 0, maxY);
+  // SAFE aim (never NaN)
+  getSafeAim(out){
+    const v = this.touch.right.vec;
+    if (this.touch.right.active && v && v.length() > 0.20){
+      out.copy(v);
+      const len = out.length();
+      if (len > 0.0001) out.scale(1/len);
+      else out.copy(this.lastAim);
+
+      if (isFiniteNum(out.x) && isFiniteNum(out.y)) this.lastAim.copy(out);
+      return out;
+    }
+
+    out.copy(this.lastAim);
+    if (!isFiniteNum(out.x) || !isFiniteNum(out.y) || out.length() < 0.0001){
+      out.set(1,0);
+      this.lastAim.set(1,0);
+    }
+    return out;
   }
 
-  updateWheelFromPointer(p){
-    const dx = p.x - this.wheel.cx;
-    const dy = p.y - this.wheel.cy;
-    const r = this.wheel.r - 16;
-    const len = Math.hypot(dx, dy) || 1;
-    const nx = dx / len;
-    const ny = dy / len;
-    this.wheelKnob.setPosition(this.wheel.cx + nx*r, this.wheel.cy + ny*r);
-    this.steer = clamp(dx / this.wheel.r, -1, 1);
-  }
-
-  // MENU -------------------------------------------------------------------
   buildMenu(){
-    const w = VIEW_W, h = VIEW_H;
+    const w = this.scale.width;
+    const h = this.scale.height;
 
-    this.menuRoot = this.add.container(0, 0);
-    const add = obj => { this.menuRoot.add(obj); return obj; };
+    this.menu = this.add.container(0,0).setScrollFactor(0);
 
-    add(this.add.rectangle(w/2, h/2+22, w*0.92, h*0.80, COLORS.panel, 0.95)
-      .setStrokeStyle(2, COLORS.panelBorder, 1).setScrollFactor(0).setDepth(2000));
+    const panel = this.add.rectangle(w/2, h/2, w*0.92, h*0.56, 0x000000, 0.65).setStrokeStyle(2, 0x444444);
+    const title = this.add.text(w/2, h/2 - 160, "Vyber zbraň", { fontSize:"24px", color:"#fff" }).setOrigin(0.5);
 
-    this.menuCarLabel = add(this.add.text(w/2, 150, 'AUTÁ', {
-      fontSize:'16px', fontStyle:'bold', color:COLORS.subtext
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(2001));
+    this.menuWeaponName = this.add.text(w/2, h/2 - 90, "", { fontSize:"22px", color:"#fff" }).setOrigin(0.5);
+    this.menuWeaponDesc = this.add.text(w/2, h/2 - 55, "", { fontSize:"14px", color:"#cfcfcf", align:"center" }).setOrigin(0.5);
 
-    // cards
-    this.carCards = [];
-    const carY = 250;
-    const cardW = 82, cardH = 110;
-    const xs = [78, 195, 312];
-    CARS.forEach((car, i)=>{
-      const cont = this.add.container(xs[i], carY);
-      const bg = this.add.rectangle(0, 0, cardW, cardH, COLORS.card, 1)
-        .setStrokeStyle(2, COLORS.cardBorder, 0.75).setInteractive({ useHandCursor:true });
-      const icon = this.add.image(0, -20, 'tex_car_menu').setTint(car.color);
-      if (car.id === 'motorka') icon.setScale(0.32, 0.48);
-      else icon.setScale(0.48, 0.48);
-      const name = this.add.text(0, 24, car.name, { fontSize:'14px', color:'#ffffff', fontStyle:'bold' }).setOrigin(0.5);
-      const speed = this.add.text(0, 44, `max ${car.maxSpeed}`, { fontSize:'11px', color:'#e8f4ff' }).setOrigin(0.5);
-      cont.add([bg, icon, name, speed]);
-      cont.setScrollFactor(0).setDepth(2002);
-      bg.on('pointerdown', ()=> {
-        this.selectedCarIndex = i;
-        this.selectedCar = CARS[i];
-        this.refreshMenuVisuals();
-      });
-      this.menuRoot.add(cont);
-      this.carCards.push({ cont, bg, icon, name, speed });
-    });
+    const btnPrev = this.add.rectangle(w/2 - 120, h/2, 90, 54, 0x1c1c1c, 0.95).setStrokeStyle(2, 0x555555).setInteractive();
+    const btnNext = this.add.rectangle(w/2 + 120, h/2, 90, 54, 0x1c1c1c, 0.95).setStrokeStyle(2, 0x555555).setInteractive();
+    const prevTxt = this.add.text(w/2 - 120, h/2, "◀", { fontSize:"26px", color:"#fff" }).setOrigin(0.5);
+    const nextTxt = this.add.text(w/2 + 120, h/2, "▶", { fontSize:"26px", color:"#fff" }).setOrigin(0.5);
 
-    this.menuMapLabel = add(this.add.text(w/2, 410, 'MAPY', {
-      fontSize:'16px', fontStyle:'bold', color:COLORS.subtext
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(2001));
+    const btnStart = this.add.rectangle(w/2, h/2 + 110, 240, 66, 0x2bdc4a, 0.95).setStrokeStyle(2, 0x0f6b22).setInteractive();
+    const startTxt = this.add.text(w/2, h/2 + 110, "ŠTART", { fontSize:"22px", color:"#111" }).setOrigin(0.5);
 
-    // map panel
-    this.mapPanel = this.add.container(w/2, 525).setScrollFactor(0).setDepth(2002);
-    const mapBgOuter = this.add.rectangle(0, 0, 284, 164, COLORS.ocean, 1)
-      .setStrokeStyle(2, COLORS.cardBorder, 0.9);
-    const clipFrame = this.add.graphics();
-    clipFrame.fillStyle(0xffffff, 1);
-    clipFrame.fillRoundedRect(-132, -72, 264, 144, 18);
-    const mask = clipFrame.createGeometryMask();
+    this.menu.add([panel, title, this.menuWeaponName, this.menuWeaponDesc, btnPrev, btnNext, prevTxt, nextTxt, btnStart, startTxt]);
+    this.menu.list.forEach(o => o.setScrollFactor(0).setDepth(200));
 
-    const ocean = this.add.rectangle(0, 0, 264, 144, COLORS.ocean, 1);
-    ocean.setMask(mask);
-
-    const europe = this.add.graphics();
-    europe.fillStyle(COLORS.land, 1);
-    // rough Europe blobs
-    europe.fillPoints([
-      new Phaser.Geom.Point(-112,-30), new Phaser.Geom.Point(-86,-62), new Phaser.Geom.Point(-44,-58),
-      new Phaser.Geom.Point(-16,-38), new Phaser.Geom.Point(24,-40), new Phaser.Geom.Point(60,-52),
-      new Phaser.Geom.Point(104,-32), new Phaser.Geom.Point(116,8), new Phaser.Geom.Point(84,28),
-      new Phaser.Geom.Point(30,20), new Phaser.Geom.Point(-10,42), new Phaser.Geom.Point(-42,20),
-      new Phaser.Geom.Point(-76,30), new Phaser.Geom.Point(-104,10)
-    ], true);
-    // Iberia/Italy/Balkans touches
-    europe.fillPoints([new Phaser.Geom.Point(-88,16), new Phaser.Geom.Point(-68,18), new Phaser.Geom.Point(-58,34), new Phaser.Geom.Point(-76,48), new Phaser.Geom.Point(-94,40)], true);
-    europe.fillPoints([new Phaser.Geom.Point(0,28), new Phaser.Geom.Point(10,54), new Phaser.Geom.Point(2,68), new Phaser.Geom.Point(-8,52)], true);
-    europe.fillPoints([new Phaser.Geom.Point(22,18), new Phaser.Geom.Point(52,18), new Phaser.Geom.Point(62,40), new Phaser.Geom.Point(30,44)], true);
-    europe.setMask(mask);
-
-    const slShape = this.add.graphics();
-    slShape.fillStyle(0xdfe96b, 1);
-    slShape.lineStyle(2, 0xfff59a, 1);
-    // slightly Slovenia-like polygon placed in Balkans area
-    const slPts = [
-      new Phaser.Geom.Point(10, 26), new Phaser.Geom.Point(28, 22), new Phaser.Geom.Point(42, 28),
-      new Phaser.Geom.Point(40, 40), new Phaser.Geom.Point(24, 46), new Phaser.Geom.Point(8, 40)
-    ];
-    slShape.fillPoints(slPts, true);
-    slShape.strokePoints(slPts, true);
-    slShape.setMask(mask);
-
-    const slHit = this.add.zone(25, 34, 48, 32).setRectangleDropZone(48, 32).setInteractive({useHandCursor:true});
-    slHit.on('pointerdown', ()=>{
-      this.selectedMap = MAPS.si;
-      this.refreshMenuVisuals();
-    });
-
-    const worldTag = this.add.rectangle(-88, -52, 72, 24, 0x234669, 1).setStrokeStyle(1, 0xa4d0ff, 1);
-    const worldTxt = this.add.text(-88, -52, '↔ svetadiely', { fontSize:'12px', color:'#ffffff' }).setOrigin(0.5);
-    const slTxt = this.add.text(48, 52, 'Slovinsko', { fontSize:'16px', color:'#ffffff', fontStyle:'bold' }).setOrigin(0.5);
-
-    this.mapPanel.add([mapBgOuter, ocean, europe, slShape, slHit, worldTag, worldTxt, slTxt, clipFrame]);
-    this.menuRoot.add(this.mapPanel);
-
-    this.selectionText = add(this.add.text(w/2, 630, '', {
-      fontSize:'16px', color:'#fff'
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(2002));
-
-    this.btnStart = add(this.add.rectangle(w/2, 705, 212, 58, 0x2bdc4a, 1)
-      .setInteractive({ useHandCursor:true }).setScrollFactor(0).setDepth(2002));
-    this.btnStartTxt = add(this.add.text(w/2, 705, 'ŠTART', {
-      fontSize:'22px', fontStyle:'bold', color:'#111'
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(2003));
-    this.btnStart.on('pointerdown', ()=> this.startGame());
-  }
-
-  refreshMenuVisuals(){
-    this.carCards.forEach((card, i)=>{
-      const selected = i === this.selectedCarIndex;
-      card.bg.setFillStyle(selected ? COLORS.cardSelected : COLORS.card, 1);
-      card.bg.setStrokeStyle(selected ? 3 : 2, selected ? 0xffffff : COLORS.cardBorder, selected ? 1 : 0.75);
-      card.name.setColor('#ffffff');
-      card.speed.setColor('#e8f4ff');
-    });
-    this.selectionText.setText(`Auto: ${this.selectedCar.name}   •   Mapa: ${this.selectedMap.name}`);
+    btnPrev.on("pointerdown", ()=>{ this.weaponIndex = (this.weaponIndex - 1 + WEAPONS.length) % WEAPONS.length; this.refreshMenuWeapon(); });
+    btnNext.on("pointerdown", ()=>{ this.weaponIndex = (this.weaponIndex + 1) % WEAPONS.length; this.refreshMenuWeapon(); });
+    btnStart.on("pointerdown", ()=> this.startGame());
   }
 
   setState(s){
     this.state = s;
-    const showMenu = s === 'menu';
-    const playing = s === 'playing';
-    this.menuRoot.setVisible(showMenu);
+    const isMenu = (s === "menu");
+    const isPlaying = (s === "playing");
 
-    [this.wheelBase, this.wheelRing, this.wheelKnob, this.gasBtn, this.gasTxt].forEach(o=>o.setVisible(playing));
-    if (showMenu){
-      this.uiInfo.setText('Vyber auto a mapu, potom štart.');
-      this.debug('');
-      this.lightDot.setFillStyle(0x2bdc4a);
-    } else {
-      this.lightDot.setFillStyle(0xffcc33);
+    this.menu.setVisible(isMenu);
+
+    this.joyLeft.base.setVisible(isPlaying);
+    this.joyLeft.knob.setVisible(isPlaying);
+    this.joyRight.base.setVisible(isPlaying);
+    this.joyRight.knob.setVisible(isPlaying);
+
+    if (isMenu){
+      this.cameras.main.stopFollow();
+      this.cameras.main.scrollX = 0;
+      this.cameras.main.scrollY = 0;
+      this.resetRun(true);
     }
   }
 
-  debug(msg){
-    this.debugTxt.setText(msg || '');
+  refreshMenuWeapon(){
+    const ww = WEAPONS[this.weaponIndex];
+    this.menuWeaponName.setText(ww.name);
+    this.menuWeaponDesc.setText(ww.desc);
   }
 
-  // WORLD ------------------------------------------------------------------
-  clearWorld(){
-    if (this.landLayer) this.landLayer.destroy(true);
-    if (this.wallGroup) this.wallGroup.clear(true, true);
-    if (this.finishZone) this.finishZone.destroy();
-    if (this.finishFlag) this.finishFlag.destroy();
-    if (this.car) this.car.destroy();
-    if (this.gridLayer) this.gridLayer.destroy(true);
-
-    this.landLayer = null;
-    this.wallGroup = null;
-    this.finishZone = null;
-    this.finishFlag = null;
-    this.car = null;
-    this.gridLayer = null;
+  updateUI(){
+    this.uiHP.setText(`HP: ${this.hp}`);
+    this.uiScore.setText(`Skóre: ${this.score}`);
+    this.uiWave.setText(`Vlna: ${this.wave}`);
+    this.uiWeapon.setText(`Zbraň: ${this.weapon.name}`);
   }
 
-  normalizeGrid(grid){
-    const rows = grid.length;
-    const cols = Math.max(...grid.map(s=>s.length));
-    const out = [];
-    for (let y=0; y<rows; y++) out.push(grid[y].padEnd(cols, '.'));
-    return out;
+  resetRun(placeOnly=false){
+    this.hp = this.hpMax;
+    this.score = 0;
+    this.wave = 1;
+    this.fireCooldown = 0;
+    this.lastAim.set(1, 0);
+
+    this.touch.left.active = false;
+    this.touch.right.active = false;
+    this.touch.firing = false;
+    this.touch.left.id = null;
+    this.touch.right.id = null;
+    this.touch.left.basePos = null;
+    this.touch.right.basePos = null;
+    this.touch.left.vec.set(0,0);
+    this.touch.right.vec.set(0,0);
+
+    this.enemies.clear(true, true);
+
+    // clear manual bullets
+    this.bullets.forEach(b => b.go?.destroy?.());
+    this.bullets.length = 0;
+
+    const p = randChoice(this.playerLand.length ? this.playerLand : this.spawnLand);
+    this.player.setPosition(p.x, p.y);
+    this.player.body.setVelocity(0,0);
+
+    if (!placeOnly) this.spawnWave(this.wave);
+
+    this.updateUI();
+    this.uiInfo.setText("");
   }
 
-  findCell(grid, ch){
-    for (let y=0; y<grid.length; y++){
-      for (let x=0; x<grid[y].length; x++){
-        if (grid[y][x] === ch) return {x, y};
+  startGame(){
+    this.weapon = WEAPONS[this.weaponIndex];
+    this.uiWeapon.setText(`Zbraň: ${this.weapon.name}`);
+
+    this.cameras.main.startFollow(this.player, true, 0.12, 0.12);
+
+    this.setState("playing");
+    this.resetRun(false);
+    this.uiInfo.setText("Preži a vyčisti vlnu!");
+  }
+
+  takeDamage(dmg){
+    this.hp = clamp(this.hp - dmg, 0, this.hpMax);
+    this.uiInfo.setText(`-${dmg} HP`);
+    if (this.hp <= 0){
+      this.uiInfo.setText(`💀 Koniec! Skóre: ${this.score}. Vyber zbraň a ŠTART.`);
+      this.setState("menu");
+    }
+  }
+
+  spawnWave(wave){
+    const count = Math.min(3 + wave, 10);
+    for (let i=0;i<count;i++){
+      const pos = randChoice(this.spawnLand);
+
+      const e = this.physics.add.sprite(pos.x, pos.y, "tex_enemy");
+      e.body.setSize(14, 14, true);
+
+      e.baseSpeed = 55 + wave * 4;
+      e.setDrag(300, 300);
+      e.setMaxVelocity(110 + wave*5, 110 + wave*5);
+
+      e.hp = 35 + wave * 8;
+      e.hitCd = 0;
+      e.flash = 0;
+
+      this.enemies.add(e);
+    }
+    this.uiInfo.setText(`Vlna ${wave} (zombie: ${count})`);
+  }
+
+  // Manual bullet / mine spawn (NO physics)
+  tryFire(){
+    if (this.fireCooldown > 0) return;
+    this.fireCooldown = this.weapon.fireRateMs;
+
+    const aim = this.getSafeAim(this._aim);
+    const baseAngle = Math.atan2(aim.y, aim.x);
+
+    const bullets = this.weapon.bullets;
+    const spread = this.weapon.spreadDeg;
+
+    for (let i=0;i<bullets;i++){
+      if (this.bullets.length >= this.MAX_BULLETS){
+        const old = this.bullets.shift();
+        old?.go?.destroy?.();
+      }
+
+      const off = (bullets === 1) ? 0 : Phaser.Math.Linear(-spread/2, spread/2, i/(bullets-1));
+      const ang = baseAngle + degToRad(off + Phaser.Math.Between(-spread/6, spread/6));
+
+      const isMine = !!this.weapon.mine;
+      const sp = isMine ? 0 : this.weapon.speed;
+      let vx = Math.cos(ang) * sp;
+      let vy = Math.sin(ang) * sp;
+
+      if (!isFiniteNum(vx) || !isFiniteNum(vy)){
+        vx = sp; vy = 0;
+      }
+
+      const spawnDist = isMine ? 22 : 18;
+      const sx = this.player.x + Math.cos(ang) * spawnDist;
+      const sy = this.player.y + Math.sin(ang) * spawnDist;
+
+      // render as sprite (no physics body)
+      const go = this.add.sprite(sx, sy, isMine ? "tex_mine" : "tex_bullet");
+
+      this.bullets.push({
+        go,
+        kind: isMine ? "mine" : "bullet",
+        x: sx, y: sy,
+        vx, vy,
+        life: 0.95, // seconds
+        damage: this.weapon.damage,
+        w: isMine ? 10 : 6,
+        h: isMine ? 10 : 6,
+        triggerRadius: isMine ? 18 : 0
+      });
+    }
+  }
+
+  // tile check for tree (code 3), water/lake do not block bullets
+  isTreeAtWorld(x, y){
+    const tx = Math.floor(x / TILE);
+    const ty = Math.floor(y / TILE);
+    if (tx < 0 || ty < 0 || tx >= MAP_W || ty >= MAP_H) return true; // outside = kill bullet
+    return this.map[ty][tx] === 3;
+  }
+
+  update(_, deltaMs){
+    if (this.state !== "playing") return;
+
+    const dt = deltaMs / 1000;
+
+    this.fireCooldown = Math.max(0, this.fireCooldown - deltaMs);
+
+    // enemies chase + flash
+    this.enemies.getChildren().forEach(e=>{
+      if (!e?.active || !e.body) return;
+      if (e.hitCd > 0) e.hitCd -= deltaMs;
+
+      if (e.flash > 0){
+        e.flash -= deltaMs;
+        e.setTint(COLORS.red);
+      } else {
+        e.clearTint();
+      }
+
+      const dx = this.player.x - e.x;
+      const dy = this.player.y - e.y;
+      const len = Math.hypot(dx, dy) || 1;
+      const sp = e.baseSpeed || 60;
+      e.body.setVelocity((dx/len)*sp, (dy/len)*sp);
+    });
+
+    if (this.enemies.countActive(true) === 0){
+      this.wave += 1;
+      this.spawnWave(this.wave);
+    }
+
+    // player movement
+    const mv = this._tmp;
+    mv.set(0,0);
+
+    if (this.touch.left.active) mv.copy(this.touch.left.vec);
+
+    const up = this.keys.W.isDown || this.keys.UP.isDown;
+    const down = this.keys.S.isDown || this.keys.DOWN.isDown;
+    const left = this.keys.A.isDown || this.keys.LEFT.isDown;
+    const right = this.keys.D.isDown || this.keys.RIGHT.isDown;
+    if (up) mv.y -= 1;
+    if (down) mv.y += 1;
+    if (left) mv.x -= 1;
+    if (right) mv.x += 1;
+
+    if (mv.length() > 0.05) mv.normalize();
+    this.player.body.setVelocity(mv.x * 200, mv.y * 200);
+
+    // aim visual
+    const aim = this.getSafeAim(this._aim);
+    const ang = Math.atan2(aim.y, aim.x);
+    this.aimLine.setPosition(this.player.x, this.player.y);
+    this.aimLine.rotation = ang + Math.PI/2;
+
+    // fire
+    if (this.touch.right.active && this.touch.firing){
+      this.tryFire();
+    }
+
+    // ---- Manual bullets update + collisions ----
+    // Player/enemy sizes for hitboxes
+    const enemyW = 14, enemyH = 14;
+
+    for (let i = this.bullets.length - 1; i >= 0; i--){
+      const b = this.bullets[i];
+      b.life -= dt;
+
+      // move bullets, mines stay on ground
+      if (b.kind !== "mine"){
+        b.x += b.vx * dt;
+        b.y += b.vy * dt;
+      }
+      b.go.x = b.x;
+      b.go.y = b.y;
+
+      // kill if expired
+      if (b.life <= 0){
+        b.go.destroy();
+        this.bullets.splice(i, 1);
+        continue;
+      }
+
+      // kill if hits tree (water ignored)
+      if (this.isTreeAtWorld(b.x, b.y)){
+        b.go.destroy();
+        this.bullets.splice(i, 1);
+        continue;
+      }
+
+      // hit enemies
+      let hit = false;
+      this.enemies.getChildren().forEach(e=>{
+        if (hit || !e?.active) return;
+
+        if (b.kind === "mine"){
+          const dx = e.x - b.x;
+          const dy = e.y - b.y;
+          if ((dx*dx + dy*dy) <= (b.triggerRadius * b.triggerRadius)){
+            e.hp = 0;
+            e.flash = 90;
+            hit = true;
+            e.destroy();
+            this.score += 10;
+            this.uiInfo.setText(`💥 Mina +10`);
+          }
+          return;
+        }
+
+        if (aabbOverlap(b.x, b.y, b.w, b.h, e.x, e.y, enemyW, enemyH)){
+          e.hp -= b.damage;
+          e.flash = 90;
+          hit = true;
+          if (e.hp <= 0){
+            e.destroy();
+            this.score += 10;
+            this.uiInfo.setText(`+10`);
+          }
+        }
+      });
+
+      if (hit){
+        b.go.destroy();
+        this.bullets.splice(i, 1);
+        continue;
+      }
+
+      // kill if outside world (safety)
+      if (b.x < 0 || b.y < 0 || b.x > this.worldW || b.y > this.worldH){
+        b.go.destroy();
+        this.bullets.splice(i, 1);
+        continue;
       }
     }
-    return null;
+
+    this.updateUI();
   }
 
-  isLand(ch){
-    return ch === '#' || ch === 'S';
+  // -------- Joysticks --------
+  createJoysticks(){
+    const w = this.scale.width;
+    const h = this.scale.height;
+
+    this.joyLeft = {
+      base: this.add.circle(90, h-130, 56, 0x000000, 0.30).setScrollFactor(0).setDepth(120).setVisible(false),
+      knob: this.add.circle(90, h-130, 24, 0xffffff, 0.20).setScrollFactor(0).setDepth(121).setVisible(false)
+    };
+
+    this.joyRight = {
+      base: this.add.circle(w-90, h-130, 56, 0x000000, 0.30).setScrollFactor(0).setDepth(120).setVisible(false),
+      knob: this.add.circle(w-90, h-130, 24, 0xffd800, 0.22).setScrollFactor(0).setDepth(121).setVisible(false)
+    };
   }
 
-  neighbors(x, y, cols, rows){
-    const out = [];
-    if (x > 0) out.push({x:x-1,y});
-    if (x < cols-1) out.push({x:x+1,y});
-    if (y > 0) out.push({x,y:y-1});
-    if (y < rows-1) out.push({x,y:y+1});
-    return out;
+  onPointerDown(p){
+    if (this.state !== "playing") return;
+    const isLeftSide = p.x < this.scale.width/2;
+
+    if (isLeftSide && !this.touch.left.active){
+      this.touch.left.active = true;
+      this.touch.left.id = p.id;
+      this.touch.left.basePos = { x: 90, y: this.scale.height-130 };
+      this.touch.left.vec.set(0,0);
+      this.joyLeft.base.setPosition(this.touch.left.basePos.x, this.touch.left.basePos.y);
+      this.joyLeft.knob.setPosition(this.touch.left.basePos.x, this.touch.left.basePos.y);
+    } else if (!isLeftSide && !this.touch.right.active){
+      this.touch.right.active = true;
+      this.touch.right.id = p.id;
+      this.touch.right.basePos = { x: this.scale.width-90, y: this.scale.height-130 };
+      this.touch.right.vec.set(0,0);
+      this.touch.firing = false;
+      this.joyRight.base.setPosition(this.touch.right.basePos.x, this.touch.right.basePos.y);
+      this.joyRight.knob.setPosition(this.touch.right.basePos.x, this.touch.right.basePos.y);
+    }
   }
 
-  chooseFinishCell(grid, startCell){
-    const rows = grid.length;
-    const cols = grid[0].length;
-    const q = [startCell];
-    const dist = new Map();
-    const key = (x,y)=>`${x},${y}`;
-    dist.set(key(startCell.x,startCell.y), 0);
+  onPointerUp(p){
+    if (p.id === this.touch.left.id){
+      this.touch.left.active = false;
+      this.touch.left.id = null;
+      this.touch.left.basePos = null;
+      this.touch.left.vec.set(0,0);
+      this.joyLeft.knob.setPosition(this.joyLeft.base.x, this.joyLeft.base.y);
+    }
+    if (p.id === this.touch.right.id){
+      this.touch.right.active = false;
+      this.touch.right.id = null;
+      this.touch.right.basePos = null;
+      this.touch.right.vec.set(0,0);
+      this.touch.firing = false;
+      this.joyRight.knob.setPosition(this.joyRight.base.x, this.joyRight.base.y);
+    }
+  }
 
-    let best = startCell;
-    let bestDist = -1;
+  onPointerMove(p){
+    if (this.state !== "playing") return;
+    const maxR = 44;
 
-    while (q.length){
-      const cur = q.shift();
-      const d = dist.get(key(cur.x, cur.y));
-      if (d > bestDist){
-        bestDist = d;
-        best = cur;
-      }
-      for (const n of this.neighbors(cur.x, cur.y, cols, rows)){
-        if (!this.isLand(grid[n.y][n.x])) continue;
-        const k = key(n.x, n.y);
-        if (dist.has(k)) continue;
-        dist.set(k, d+1);
-        q.push(n);
+    if (this.touch.left.active && p.id === this.touch.left.id && this.touch.left.basePos){
+      const dx = p.x - this.touch.left.basePos.x;
+      const dy = p.y - this.touch.left.basePos.y;
+
+      const v = this._tmp;
+      v.set(dx, dy);
+      const L = v.length();
+      if (L > maxR) v.scale(maxR/L);
+
+      this.joyLeft.knob.setPosition(this.touch.left.basePos.x + v.x, this.touch.left.basePos.y + v.y);
+      this.touch.left.vec.set(v.x/maxR, v.y/maxR);
+      if (this.touch.left.vec.length() > 1) this.touch.left.vec.normalize();
+    }
+
+    if (this.touch.right.active && p.id === this.touch.right.id && this.touch.right.basePos){
+      const dx = p.x - this.touch.right.basePos.x;
+      const dy = p.y - this.touch.right.basePos.y;
+
+      const v = this._tmp;
+      v.set(dx, dy);
+      const L = v.length();
+      if (L > maxR) v.scale(maxR/L);
+
+      this.joyRight.knob.setPosition(this.touch.right.basePos.x + v.x, this.touch.right.basePos.y + v.y);
+      this.touch.right.vec.set(v.x/maxR, v.y/maxR);
+      if (this.touch.right.vec.length() > 1) this.touch.right.vec.normalize();
+
+      this.touch.firing = (this.touch.right.vec.length() > 0.20);
+
+      // update lastAim only if strong enough
+      if (this.touch.right.vec.length() > 0.25){
+        const tmp = this._aim;
+        tmp.copy(this.touch.right.vec);
+        const len = tmp.length();
+        if (len > 0.0001) tmp.scale(1/len);
+        if (isFiniteNum(tmp.x) && isFiniteNum(tmp.y)) this.lastAim.copy(tmp);
       }
     }
-    return best;
   }
 
-  buildWorld(mapDef){
-    this.clearWorld();
-    this.debug('1/6 normalizujem mapu');
+  // -------- Map --------
+  generateIslandMap(){
+    // 0 sea, 1 sand, 2 grass, 3 tree, 4 lake
+    this.map = Array.from({length: MAP_H}, ()=> Array.from({length: MAP_W}, ()=> 0));
 
-    const grid = this.normalizeGrid(mapDef.grid);
-    const rows = grid.length, cols = grid[0].length;
-    this.worldW = cols * CELL;
-    this.worldH = rows * CELL;
-    this.physics.world.setBounds(0, 0, this.worldW, this.worldH);
+    const cx = (MAP_W-1)/2;
+    const cy = (MAP_H-1)/2;
+    const maxR = Math.min(MAP_W, MAP_H) * 0.44;
 
-    this.landLayer = this.add.container(0, 0);
-    this.wallGroup = this.physics.add.staticGroup();
+    for (let y=0;y<MAP_H;y++){
+      for (let x=0;x<MAP_W;x++){
+        const d = Math.hypot(x-cx, y-cy);
+        const noise = ((x%3===0)?0.9:1.0) * ((y%4===0)?0.92:1.0);
+        const r = maxR * noise;
+        if (d < r) this.map[y][x] = 2;
+      }
+    }
 
-    this.debug('2/6 kreslím terén');
-    for (let y=0; y<rows; y++){
-      for (let x=0; x<cols; x++){
-        const ch = grid[y][x];
-        const cx = x*CELL + CELL/2;
-        const cy = y*CELL + CELL/2;
-        const land = this.isLand(ch);
-
-        const tile = this.add.rectangle(
-          cx, cy, CELL, CELL,
-          land ? 0x48793c : 0x2E7ED3, 1
-        );
-        this.landLayer.add(tile);
-
-        if (!land){
-          const wall = this.add.rectangle(cx, cy, CELL, CELL, 0x000000, 0);
-          this.physics.add.existing(wall, true);
-          this.wallGroup.add(wall);
+    // sand edge
+    for (let y=0;y<MAP_H;y++){
+      for (let x=0;x<MAP_W;x++){
+        if (this.map[y][x] !== 2) continue;
+        if (this.neighbors4(x,y).some(([nx,ny]) => this.inBounds(nx,ny) && this.map[ny][nx] === 0)){
+          this.map[y][x] = 1;
         }
       }
     }
 
-    this.debug('3/6 hledám start a cíl');
-    const startCell = this.findCell(grid, 'S') || {x:1, y:1};
-    const finishCell = this.chooseFinishCell(grid, startCell);
+    // lake
+    const lakeCx = Math.floor(MAP_W*0.33);
+    const lakeCy = Math.floor(MAP_H*0.35);
+    const lakeR = 4.2;
+    for (let y=0;y<MAP_H;y++){
+      for (let x=0;x<MAP_W;x++){
+        if (this.map[y][x] === 0) continue;
+        if (Math.hypot(x-lakeCx, y-lakeCy) < lakeR) this.map[y][x] = 4;
+      }
+    }
 
-    const sx = startCell.x*CELL + CELL/2;
-    const sy = startCell.y*CELL + CELL/2;
-    const fx = finishCell.x*CELL + CELL/2;
-    const fy = finishCell.y*CELL + CELL/2;
+    // trees
+    const area = [];
+    for (let y=Math.floor(MAP_H*0.20); y<Math.floor(MAP_H*0.72); y++){
+      for (let x=Math.floor(MAP_W*0.60); x<MAP_W-2; x++){
+        if (this.map[y][x] === 2) area.push({x,y});
+      }
+    }
+    for (let i=0;i<Math.floor(area.length*0.16);i++){
+      const t = randChoice(area);
+      this.map[t.y][t.x] = 3;
+    }
 
-    this.landLayer.add(this.add.rectangle(sx, sy, CELL*0.90, 8, 0xffffff, 1));
-    this.finishFlag = this.add.image(fx, fy-8, 'tex_flag').setScale(0.72);
-    this.landLayer.add(this.finishFlag);
+    // spawns
+    this.spawnLand = [];
+    this.playerLand = [];
+    for (let y=1;y<MAP_H-1;y++){
+      for (let x=1;x<MAP_W-1;x++){
+        const c = this.map[y][x];
+        if (c !== 1 && c !== 2) continue;
 
-    this.finishZone = this.add.zone(fx, fy, CELL*0.9, CELL*0.9);
-    this.physics.add.existing(this.finishZone, true);
+        const n8 = this.neighbors8(x,y).filter(([nx,ny])=>this.inBounds(nx,ny));
+        const hasWater = n8.some(([nx,ny]) => this.map[ny][nx] === 0 || this.map[ny][nx] === 4);
+        const hasTree  = n8.some(([nx,ny]) => this.map[ny][nx] === 3);
 
-    this.debug('4/6 vytváram auto');
-    const baseW = 34, baseH = 54;
-    const wMul = this.selectedCar.widthMul || 1;
-    const hMul = this.selectedCar.heightMul || 1;
+        const px = x*TILE + TILE/2;
+        const py = y*TILE + TILE/2;
 
-    this.car = this.physics.add.image(sx, sy, 'tex_car_game');
-    this.car.setTint(this.selectedCar.color);
-    this.car.setDisplaySize(baseW*wMul, baseH*hMul);
-    this.car.body.setSize(baseW*wMul, baseH*hMul, true);
-    this.car.setDrag(320, 320);
-    this.car.setCollideWorldBounds(true);
-    this.car.body.setMaxVelocity(this.selectedCar.maxSpeed, this.selectedCar.maxSpeed);
-    this.car.body.setAngularVelocity(0);
+        if (hasWater && !hasTree) this.spawnLand.push({x:px, y:py});
+        if (!hasWater && !hasTree) this.playerLand.push({x:px, y:py});
+      }
+    }
 
-    this.debug('5/6 zapínám kolize');
-    this.physics.add.collider(this.car, this.wallGroup, ()=>this.onCrash(), null, this);
-    this.physics.add.overlap(this.car, this.finishZone, ()=>this.onFinish(), null, this);
-
-    this.debug('6/6 nastavujem kameru');
-    this.cameras.main.setBounds(0, 0, this.worldW, this.worldH);
-    this.cameras.main.zoom = 1;
-    this.cameras.main.startFollow(this.car, true, 0.12, 0.12);
-    this.cameras.main.setDeadzone(40, 60);
-    this.cameraDetached = false;
+    if (this.spawnLand.length < 10){
+      for (let y=0;y<MAP_H;y++){
+        for (let x=0;x<MAP_W;x++){
+          if (this.map[y][x] === 2) this.spawnLand.push({x:x*TILE+TILE/2, y:y*TILE+TILE/2});
+        }
+      }
+    }
+    if (this.playerLand.length < 10) this.playerLand = this.spawnLand.slice();
   }
 
-  startGame(){
-    if (this.starting) return;
-    this.starting = true;
-    try {
-      this.debug('spúšťam hru...');
-      this.money = 0;
-      this.steer = 0;
-      this.wheel.active = false;
-      this.wheel.id = null;
-      this.wheelKnob.setPosition(this.wheel.cx, this.wheel.cy - (this.wheel.r-16));
-      this.touch.gas = false;
+  renderMap(){
+    this.tiles = this.add.container(0,0);
 
-      this.buildWorld(this.selectedMap);
-      this.uiInfo.setText(`Mapa: ${this.selectedMap.name} • Auto: ${this.selectedCar.name}`);
-      this.setState('playing');
-      this.debug('');
-    } catch (e) {
-      this.debug(`chyba: ${String(e.message || e)}`);
-      console.error(e);
-      this.setState('menu');
-    } finally {
-      this.starting = false;
+    for (let y=0;y<MAP_H;y++){
+      for (let x=0;x<MAP_W;x++){
+        const code = this.map[y][x];
+        const px = x*TILE + TILE/2;
+        const py = y*TILE + TILE/2;
+
+        let color = COLORS.water;
+        if (code === 1) color = COLORS.sand;
+        if (code === 2) color = COLORS.grass;
+        if (code === 4) color = COLORS.water;
+        if (code === 3) color = COLORS.grass;
+
+        this.tiles.add(this.add.rectangle(px, py, TILE, TILE, color));
+
+        if (code !== 0){
+          this.tiles.add(this.add.rectangle(px + Phaser.Math.Between(-4,4), py + Phaser.Math.Between(-4,4), 4, 4, 0x000000, 0.08));
+        }
+
+        // water blocks ONLY enemies
+        if (code === 0 || code === 4){
+          const r = this.add.rectangle(px, py, TILE, TILE, 0x000000, 0);
+          this.physics.add.existing(r, true);
+          this.waterBlocks.add(r);
+        }
+
+        // trees block all
+        if (code === 3){
+          this.tiles.add(this.add.rectangle(px, py+3, TILE*0.25, TILE*0.40, COLORS.trunk));
+          this.tiles.add(this.add.rectangle(px, py-3, TILE*0.70, TILE*0.70, COLORS.tree));
+
+          const r = this.add.rectangle(px, py, TILE*0.78, TILE*0.78, 0x000000, 0);
+          this.physics.add.existing(r, true);
+          this.treeBlocks.add(r);
+        }
+      }
     }
   }
 
-  onCrash(){
-    if (this.state !== 'playing') return;
-    this.money = Math.max(0, this.money - 10);
-    this.uiInfo.setText('💥 Náraz');
-  }
-
-  onFinish(){
-    if (this.state !== 'playing') return;
-    this.money += 100;
-    this.best = Math.max(this.best, this.money);
-
-    this.uiInfo.setText(`🏁 CÍL! Peníze: ${this.money} (best: ${this.best})`);
-    this.lightDot.setFillStyle(0x2bdc4a);
-
-    // freeze car, keep world visible, show start button again
-    if (this.car && this.car.body){
-      this.car.body.setVelocity(0,0);
-      this.car.body.setAngularVelocity(0);
-    }
-    this.setState('menu');
-    this.menuRoot.setVisible(true);
-  }
-
-  update(){
-    this.uiMoney.setText(`Peníze: ${this.money}`);
-    if (this.state !== 'playing' || !this.car) return;
-
-    const gas = this.touch.gas || this.cursors.up.isDown;
-
-    let kbSteer = 0;
-    if (this.cursors.left.isDown) kbSteer -= 1;
-    if (this.cursors.right.isDown) kbSteer += 1;
-
-    let steer = clamp(this.steer + kbSteer, -1, 1);
-
-    if (!this.wheel.active && kbSteer === 0){
-      this.steer = Phaser.Math.Linear(this.steer, 0, 0.12);
-      steer = this.steer;
-    }
-
-    const speed = this.car.body.speed || 0;
-    const speedN = clamp(speed / (this.selectedCar.maxSpeed || 240), 0, 1);
-
-    const turnSpeed = 260;
-    this.car.body.setAngularVelocity(steer * turnSpeed * speedN);
-
-    if (gas){
-      this.resumeCameraFollow();
-      const angleDeg = (this.car.rotation * 180/Math.PI) - 90;
-      const v = new Phaser.Math.Vector2();
-      this.physics.velocityFromAngle(angleDeg, this.selectedCar.maxSpeed, v);
-
-      const a = clamp((this.selectedCar.accel || 520) / 800, 0.05, 0.18);
-      this.car.body.velocity.x = Phaser.Math.Linear(this.car.body.velocity.x, v.x, a);
-      this.car.body.velocity.y = Phaser.Math.Linear(this.car.body.velocity.y, v.y, a);
-    }
-  }
-
-  makeCarTexture(){
-    if (!this.textures.exists('tex_car_game')){
-      const g = this.add.graphics();
-      g.fillStyle(0xffffff,1);
-      g.fillRoundedRect(0,0,34,54,8);
-      g.fillStyle(0x7a7a7a,1);
-      g.fillRect(6,8,22,14);
-      g.fillStyle(0x202020,1);
-      g.fillCircle(8,10,3); g.fillCircle(26,10,3); g.fillCircle(8,44,3); g.fillCircle(26,44,3);
-      g.generateTexture('tex_car_game',34,54);
-      g.destroy();
-    }
-    if (!this.textures.exists('tex_car_menu')){
-      const g = this.add.graphics();
-      g.fillStyle(0xffffff,1);
-      g.fillRoundedRect(0,0,44,72,12);
-      g.fillStyle(0x6f6f6f,1);
-      g.fillRoundedRect(8,10,28,20,6);
-      g.fillStyle(0x1f1f1f,1);
-      g.fillCircle(10,14,4); g.fillCircle(34,14,4); g.fillCircle(10,58,4); g.fillCircle(34,58,4);
-      g.generateTexture('tex_car_menu',44,72);
-      g.destroy();
-    }
-  }
-
-  makeFlagTexture(){
-    if (this.textures.exists('tex_flag')) return;
-    const g = this.add.graphics();
-    g.lineStyle(3, 0xffffff, 1);
-    g.lineBetween(8, 34, 8, 4);
-    g.fillStyle(0xffffff,1);
-    g.fillRoundedRect(10, 6, 22, 15, 4);
-    g.fillStyle(0x3a87ff,1);
-    g.fillRect(10, 6, 22, 5);
-    g.fillStyle(0xff5959,1);
-    g.fillRect(10, 16, 22, 5);
-    g.generateTexture('tex_flag', 40, 40);
-    g.destroy();
-  }
+  neighbors4(x,y){ return [[x+1,y],[x-1,y],[x,y+1],[x,y-1]]; }
+  neighbors8(x,y){ return [[x+1,y],[x-1,y],[x,y+1],[x,y-1],[x+1,y+1],[x-1,y-1],[x+1,y-1],[x-1,y+1]]; }
+  inBounds(x,y){ return x>=0 && y>=0 && x<MAP_W && y<MAP_H; }
 }
 
 new Phaser.Game({
   type: Phaser.AUTO,
-  parent: 'wrap',
+  parent: "wrap",
   width: VIEW_W,
   height: VIEW_H,
-  backgroundColor: '#061626',
-  physics: { default: 'arcade', arcade: { debug: false } },
+  backgroundColor: "#111111",
+  physics: { default: "arcade", arcade: { debug: false } },
   scene: [MainScene],
   scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH }
 });
