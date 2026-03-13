@@ -26,14 +26,14 @@ const MAPS = {
     "..#################.....",
     "..################......",
     "...###############......",
-    "....##############......",
+    "....##########F###......",
     ".....############.......",
     "......###########.......",
     ".......##########.......",
     "........#######.........",
     "..........S####.........",
     "..............###.......",
-    "...............F##......",
+    "...............###......",
     "........................",
     "........................"
   ]},
@@ -75,7 +75,7 @@ class MainScene extends Phaser.Scene {
     this.makeRectTexture("tex_wall", CELL, CELL, 0x0b2a4a);
     this.makeRectTexture("tex_road", CELL, CELL, 0x202020);
 
-    this.uiTitle = this.add.text(VIEW_W/2, 16, "Soferujeme 4", { fontSize:"18px", color:"#fff" })
+    this.uiTitle = this.add.text(VIEW_W/2, 16, "Šoférujeme 4", { fontSize:"18px", color:"#fff" })
       .setOrigin(0.5).setScrollFactor(0).setDepth(1000);
     this.uiMoney = this.add.text(12, 46, "Peníze: 0", { fontSize:"16px", color:"#fff" })
       .setScrollFactor(0).setDepth(1000);
@@ -112,7 +112,6 @@ class MainScene extends Phaser.Scene {
     this.input.on("pointerdown", (p)=>{
       if (this.state !== "playing") return;
       if (this.isPointerOnWheel(p)){
-        this.attachCameraToCar();
         this.wheel.active = true;
         this.wheel.id = p.id;
         this.updateWheelFromPointer(p);
@@ -266,19 +265,19 @@ class MainScene extends Phaser.Scene {
   buildMenu(){
     const w = VIEW_W, h = VIEW_H;
     this.menuBg = this.add.rectangle(w/2, h/2, w*0.94, h*0.80, 0x000000, 0.76).setScrollFactor(0).setDepth(2000);
-    this.menuTitle = this.add.text(w/2, 48, "Soferujeme 4", { fontSize:"24px", color:"#fff", fontStyle:"bold" })
+    this.menuTitle = this.add.text(w/2, 48, "Šoférujeme 4", { fontSize:"24px", color:"#fff", fontStyle:"bold" })
       .setOrigin(0.5).setScrollFactor(0).setDepth(2001);
 
     this.menuCarLabel = this.add.text(w/2, 100, "VYBER AUTO", { fontSize:"14px", color:"#bdbdbd" })
       .setOrigin(0.5).setScrollFactor(0).setDepth(2001);
-    this.menuCarPreview = this.add.rectangle(w/2, 165, 78, 126, this.selectedCar.color, 1)
+    this.menuCarPreview = this.add.rectangle(w/2, 165, 52, 84, this.selectedCar.color, 1)
       .setStrokeStyle(4, 0xffffff, 0.25).setScrollFactor(0).setDepth(2001);
     this.menuCarText = this.add.text(w/2, 240, "", { fontSize:"18px", color:"#fff", align:"center" })
       .setOrigin(0.5).setScrollFactor(0).setDepth(2001);
-    this.btnCarPrev = this.add.rectangle(w/2-120, 165, 90, 54, 0x222, 1).setInteractive().setScrollFactor(0).setDepth(2001);
-    this.btnCarNext = this.add.rectangle(w/2+120, 165, 90, 54, 0x222, 1).setInteractive().setScrollFactor(0).setDepth(2001);
-    this.btnCarPrevTxt = this.add.text(w/2-120, 165, "◀", { fontSize:"26px", color:"#fff" }).setOrigin(0.5).setScrollFactor(0).setDepth(2002);
-    this.btnCarNextTxt = this.add.text(w/2+120, 165, "▶", { fontSize:"26px", color:"#fff" }).setOrigin(0.5).setScrollFactor(0).setDepth(2002);
+    this.btnCarPrev = this.add.rectangle(w/2-116, 165, 76, 48, 0x222, 1).setInteractive().setScrollFactor(0).setDepth(2001);
+    this.btnCarNext = this.add.rectangle(w/2+116, 165, 76, 48, 0x222, 1).setInteractive().setScrollFactor(0).setDepth(2001);
+    this.btnCarPrevTxt = this.add.text(w/2-116, 165, "◀", { fontSize:"24px", color:"#fff" }).setOrigin(0.5).setScrollFactor(0).setDepth(2002);
+    this.btnCarNextTxt = this.add.text(w/2+116, 165, "▶", { fontSize:"24px", color:"#fff" }).setOrigin(0.5).setScrollFactor(0).setDepth(2002);
 
     this.menuMapLabel = this.add.text(w/2, 300, "VYBER MAPU", { fontSize:"14px", color:"#bdbdbd" })
       .setOrigin(0.5).setScrollFactor(0).setDepth(2001);
@@ -325,55 +324,51 @@ class MainScene extends Phaser.Scene {
     this.updateMapMenuVisibility();
   }
 
-  buildWorldAtlas(){
-    const mk = (x, y, w, h, color, label, onClick)=>{
-      const r = this.add.rectangle(x, y, w, h, color, 1).setStrokeStyle(2, 0xffffff, 0.14).setInteractive();
-      const t = this.add.text(x, y, label, { fontSize:"14px", color:"#fff", fontStyle:"bold" }).setOrigin(0.5);
-      if (onClick) r.on("pointerdown", onClick);
-      this.mapPanel.add([r,t]);
-      this.worldShapes.push(r,t);
-      return r;
-    };
+  addAtlasTile(x, y, w, h, color, label, targetList, onClick, radius=18){
+    const g = this.add.graphics();
+    g.fillStyle(color, 1);
+    g.lineStyle(2, 0xffffff, 0.16);
+    g.fillRoundedRect(x - w/2, y - h/2, w, h, radius);
+    g.strokeRoundedRect(x - w/2, y - h/2, w, h, radius);
+    const zone = this.add.zone(x, y, w, h).setOrigin(0.5).setInteractive();
+    const txt = this.add.text(x, y, label, { fontSize:"14px", color:"#fff", fontStyle:"bold", align:"center", wordWrap:{ width:w-12 } }).setOrigin(0.5);
+    if (onClick) zone.on("pointerdown", onClick);
+    this.mapPanel.add([g, zone, txt]);
+    targetList.push(g, zone, txt);
+    return zone;
+  }
 
-    mk(92, 452, 70, 48, 0x3f8f45, "S. Amerika");
-    mk(116, 555, 52, 84, 0x3f8f45, "J. Amerika");
-    mk(196, 450, 62, 44, 0x4ea85b, "Európa", ()=>{
+  buildWorldAtlas(){
+    this.addAtlasTile(92, 452, 82, 54, 0x3f8f45, "S. Amerika", this.worldShapes, null, 20);
+    this.addAtlasTile(116, 555, 60, 94, 0x3f8f45, "J. Amerika", this.worldShapes, null, 20);
+    this.addAtlasTile(196, 450, 76, 50, 0x4ea85b, "Európa", this.worldShapes, ()=>{
       this.menuMapMode = "europe";
       this.updateMapMenuVisibility();
-    });
-    mk(228, 532, 92, 118, 0x3f8f45, "Afrika");
-    mk(274, 450, 118, 92, 0x447f3d, "Ázia");
-    mk(308, 582, 62, 36, 0x5b9e45, "Austrália");
+    }, 20);
+    this.addAtlasTile(228, 532, 96, 124, 0x3f8f45, "Afrika", this.worldShapes, null, 22);
+    this.addAtlasTile(284, 450, 124, 96, 0x447f3d, "Ázia", this.worldShapes, null, 22);
+    this.addAtlasTile(308, 582, 72, 40, 0x5b9e45, "Austrália", this.worldShapes, null, 18);
   }
 
   buildEuropeAtlas(){
-    const country = (x, y, w, h, name, mapObj, unlocked)=>{
-      const fill = unlocked ? 0x4ea85b : 0x5e5e5e;
-      const alpha = unlocked ? 1 : 0.72;
-      const r = this.add.rectangle(x, y, w, h, fill, alpha).setStrokeStyle(2, 0xffffff, 0.18);
-      const t = this.add.text(x, y, unlocked ? name : "🔒", { fontSize: unlocked ? "13px" : "20px", color:"#fff", fontStyle:"bold" }).setOrigin(0.5);
-      if (unlocked){
-        r.setInteractive();
-        r.on("pointerdown", ()=>{
-          this.selectedMap = mapObj;
-          this.refreshMenuTexts();
-        });
-      }
-      this.mapPanel.add([r,t]);
-      this.europeShapes.push(r,t);
-    };
-
     const seaText = this.add.text(195, 392, "Európa", { fontSize:"20px", color:"#dcefff", fontStyle:"bold" }).setOrigin(0.5);
     this.mapPanel.add(seaText);
     this.europeShapes.push(seaText);
 
-    country(162, 468, 48, 32, "🔒", MAPS.it, false);   // France-ish lock area left
-    country(205, 454, 42, 28, "🔒", MAPS.at, false);   // Germany/Austria
-    country(226, 487, 28, 18, "Slovinsko", MAPS.si, true);
-    country(248, 504, 36, 24, "🔒", MAPS.hr, false);
-    country(252, 470, 42, 26, "🔒", MAPS.hu, false);
-    country(188, 510, 42, 44, "🔒", MAPS.it, false);
-    country(282, 498, 42, 34, "🔒", MAPS.hu, false);
+    this.addAtlasTile(160, 468, 52, 34, 0x5e5e5e, "🔒", this.europeShapes, null, 12);
+    this.addAtlasTile(205, 454, 46, 30, 0x5e5e5e, "🔒", this.europeShapes, null, 12);
+    this.addAtlasTile(224, 489, 34, 20, 0x4ea85b, "SI", this.europeShapes, ()=>{
+      this.selectedMap = MAPS.si;
+      this.refreshMenuTexts();
+    }, 10);
+    this.addAtlasTile(248, 504, 40, 26, 0x5e5e5e, "🔒", this.europeShapes, null, 12);
+    this.addAtlasTile(252, 470, 46, 28, 0x5e5e5e, "🔒", this.europeShapes, null, 12);
+    this.addAtlasTile(188, 510, 48, 48, 0x5e5e5e, "🔒", this.europeShapes, null, 12);
+    this.addAtlasTile(284, 500, 48, 36, 0x5e5e5e, "🔒", this.europeShapes, null, 12);
+
+    const slText = this.add.text(226, 516, "Slovinsko", { fontSize:"12px", color:"#fff", fontStyle:"bold" }).setOrigin(0.5);
+    this.mapPanel.add(slText);
+    this.europeShapes.push(slText);
   }
 
   updateMapMenuVisibility(){
@@ -651,6 +646,7 @@ class MainScene extends Phaser.Scene {
     if (this.state !== "playing" || !this.car) return;
 
     const gas = this.touch.gas || this.cursors.up.isDown;
+
     let kbSteer = 0;
     if (this.cursors.left.isDown) kbSteer -= 1;
     if (this.cursors.right.isDown) kbSteer += 1;
@@ -658,7 +654,7 @@ class MainScene extends Phaser.Scene {
     let steer = clamp(this.steer + kbSteer, -1, 1);
 
     if (!this.wheel.active && kbSteer === 0){
-      this.steer = Phaser.Math.Linear(this.steer, 0, 0.22);
+      this.steer = Phaser.Math.Linear(this.steer, 0, 0.12);
       steer = this.steer;
     }
 
@@ -666,13 +662,17 @@ class MainScene extends Phaser.Scene {
       this.attachCameraToCar();
     }
 
-    const turnSpeed = 190;
-    this.car.body.setAngularVelocity(steer * turnSpeed);
+    const speed = this.car.body.speed || 0;
+    const speedN = clamp(speed / (this.selectedCar.maxSpeed || 240), 0, 1);
+    const turnSpeed = 260;
+    const angVel = steer * turnSpeed * speedN;
+    this.car.body.setAngularVelocity(angVel);
 
     if (gas){
       const angleDeg = (this.car.rotation * 180/Math.PI) - 90;
       const v = new Phaser.Math.Vector2();
       this.physics.velocityFromAngle(angleDeg, this.selectedCar.maxSpeed, v);
+
       const a = clamp((this.selectedCar.accel || 520) / 800, 0.05, 0.18);
       this.car.body.velocity.x = Phaser.Math.Linear(this.car.body.velocity.x, v.x, a);
       this.car.body.velocity.y = Phaser.Math.Linear(this.car.body.velocity.y, v.y, a);
