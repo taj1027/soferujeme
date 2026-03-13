@@ -78,8 +78,10 @@ class MainScene extends Phaser.Scene {
     this.selectedMap = MAPS.si;
 
     this.steer = 0;
-    this.touch = { gas:false };
+    this.touch = { gas:false, gasId:null };
     this.wheel = { active:false, id:null, cx:92, cy:VIEW_H-92, r:70 };
+    this.wheelAngle = 0;
+    this.wheelMaxAngle = 120;
 
     this.dragPan = {
       active:false, id:null, startX:0, startY:0, camX:0, camY:0
@@ -94,8 +96,11 @@ class MainScene extends Phaser.Scene {
   create(){
     document.title = 'Šoférujeme 4';
 
-    this.makeCarTexture();
+    this.makeCarTexture('car_taxi', 60, 92, 0xffd800, 0x111111, false);
+    this.makeCarTexture('car_moto', 40, 84, 0xff4fa3, 0xffffff, true);
+    this.makeCarTexture('car_auto', 60, 92, 0xf6f6f6, 0x2c7be5, false);
     this.makeFlagTexture();
+    this.makeEuropeTexture('atlas_europe', 280, 170);
 
     this.add.rectangle(VIEW_W/2, VIEW_H/2, VIEW_W, VIEW_H, COLORS.bg, 1);
 
@@ -131,26 +136,41 @@ class MainScene extends Phaser.Scene {
     this.lightDot = this.add.circle(VIEW_W-44, 56, 16, 0x2bdc4a).setScrollFactor(0).setDepth(901);
   }
 
-  buildControls(){
-    // Original gas + wheel layout, restored from original file
-    this.gasBtn = this.add.rectangle(VIEW_W-90, VIEW_H-80, 110, 110, 0x000000, 0.35)
-      .setInteractive().setScrollFactor(0).setDepth(1000);
-    this.gasTxt = this.add.text(VIEW_W-90, VIEW_H-80, '⛽', { fontSize:'34px', color:'#fff' })
-      .setOrigin(0.5).setScrollFactor(0).setDepth(1001);
 
-    this.wheelBase = this.add.circle(this.wheel.cx, this.wheel.cy, this.wheel.r, 0x000000, 0.30)
-      .setScrollFactor(0).setDepth(1000);
-    this.wheelRing = this.add.circle(this.wheel.cx, this.wheel.cy, this.wheel.r-10, 0xffffff, 0.06)
-      .setScrollFactor(0).setDepth(1001);
-    this.wheelKnob = this.add.circle(this.wheel.cx, this.wheel.cy - (this.wheel.r-16), 12, 0xffffff, 0.18)
-      .setScrollFactor(0).setDepth(1002);
+buildControls(){
+  this.gasBtn = this.add.circle(VIEW_W-82, VIEW_H-84, 54, 0x0c1117, 0.38)
+    .setInteractive().setScrollFactor(0).setDepth(1000);
+  this.gasInner = this.add.circle(VIEW_W-82, VIEW_H-84, 38, 0x39d84d, 1)
+    .setScrollFactor(0).setDepth(1001);
+  this.gasTxt = this.add.text(VIEW_W-82, VIEW_H-84, '⛽', { fontSize:'28px', color:'#08250d' })
+    .setOrigin(0.5).setScrollFactor(0).setDepth(1002);
 
-    this.gasBtn.on('pointerdown', ()=> { if (this.state === 'playing') { this.touch.gas = true; this.resumeCameraFollow(); } });
-    this.gasBtn.on('pointerup', ()=> this.touch.gas = false);
-    this.gasBtn.on('pointerout', ()=> this.touch.gas = false);
-  }
+  this.wheelBase = this.add.circle(this.wheel.cx, this.wheel.cy, this.wheel.r, 0x0c1117, 0.40)
+    .setScrollFactor(0).setDepth(1000);
+  this.wheelRing = this.add.circle(this.wheel.cx, this.wheel.cy, this.wheel.r-10, 0xffffff, 0.08)
+    .setScrollFactor(0).setDepth(1001);
+  this.wheelSpokes = this.add.graphics().setScrollFactor(0).setDepth(1001);
+  this.wheelKnob = this.add.circle(this.wheel.cx, this.wheel.cy - (this.wheel.r-14), 11, 0xffffff, 0.22)
+    .setScrollFactor(0).setDepth(1002);
+  this.renderWheelVisual();
 
-  installInputHandlers(){
+  this.gasBtn.on('pointerdown', (p)=> {
+    if (this.state !== 'playing') return;
+    this.touch.gas = true;
+    this.touch.gasId = p.id;
+    this.resumeCameraFollow();
+  });
+  const releaseGas = (p)=>{
+    if (!p || this.touch.gasId === null || p.id === this.touch.gasId){
+      this.touch.gas = false;
+      this.touch.gasId = null;
+    }
+  };
+  this.gasBtn.on('pointerup', releaseGas);
+  this.gasBtn.on('pointerout', releaseGas);
+}
+
+installInputHandlers(){
     this.cursors = this.input.keyboard.createCursorKeys();
 
     this.input.on('pointerdown', (p)=>{
@@ -254,167 +274,163 @@ class MainScene extends Phaser.Scene {
     this.pinch.midY = (a.y + b.y) / 2;
   }
 
-  updatePinch(a, b){
-    if (!this.pinch.active) this.beginPinch(a,b);
-    const cam = this.cameras.main;
-    const dist = Phaser.Math.Distance.Between(a.x, a.y, b.x, b.y) || 1;
-    const factor = dist / (this.pinch.startDist || 1);
-    cam.zoom = clamp(this.pinch.startZoom * factor, 0.7, 2.2);
-    this.clampCamera();
+
+updatePinch(a, b){
+  if (!this.pinch.active) this.beginPinch(a,b);
+  const cam = this.cameras.main;
+  const dist = Phaser.Math.Distance.Between(a.x, a.y, b.x, b.y) || 1;
+  const factor = dist / (this.pinch.startDist || 1);
+  cam.zoom = clamp(this.pinch.startZoom * factor, 0.7, 2.2);
+  this.clampCamera();
+}
+
+detachCamera(){
+  if (this.cameraDetached || !this.car) return;
+  this.cameras.main.stopFollow();
+  this.cameraDetached = true;
+  this.debug('kamera voľná');
+}
+
+resumeCameraFollow(){
+  if (!this.car) return;
+  this.cameras.main.zoom = 1;
+  this.cameras.main.startFollow(this.car, true, 0.12, 0.12);
+  this.cameras.main.setDeadzone(40, 60);
+  this.cameraDetached = false;
+}
+
+clampCamera(){
+  const cam = this.cameras.main;
+  const maxX = Math.max(0, this.worldW - VIEW_W / cam.zoom);
+  const maxY = Math.max(0, this.worldH - VIEW_H / cam.zoom);
+  cam.scrollX = clamp(cam.scrollX, 0, maxX);
+  cam.scrollY = clamp(cam.scrollY, 0, maxY);
+}
+
+updateWheelFromPointer(p){
+  const dx = p.x - this.wheel.cx;
+  const dy = p.y - this.wheel.cy;
+  const rawAngle = Phaser.Math.RadToDeg(Math.atan2(dy, dx)) + 90;
+  this.wheelAngle = clamp(rawAngle, -this.wheelMaxAngle, this.wheelMaxAngle);
+  this.steer = clamp(this.wheelAngle / this.wheelMaxAngle, -1, 1);
+  this.renderWheelVisual();
+}
+
+renderWheelVisual(){
+  const rad = Phaser.Math.DegToRad(this.wheelAngle - 90);
+  const r = this.wheel.r - 14;
+  const x = this.wheel.cx + Math.cos(rad) * r;
+  const y = this.wheel.cy + Math.sin(rad) * r;
+  if (this.wheelKnob) this.wheelKnob.setPosition(x, y);
+
+  if (this.wheelSpokes){
+    const g = this.wheelSpokes;
+    g.clear();
+    g.lineStyle(5, 0xffffff, 0.16);
+    for (const a of [0, 120, 240]){
+      const rr = Phaser.Math.DegToRad(a + this.wheelAngle - 90);
+      g.lineBetween(this.wheel.cx, this.wheel.cy, this.wheel.cx + Math.cos(rr)*(this.wheel.r-18), this.wheel.cy + Math.sin(rr)*(this.wheel.r-18));
+    }
+    g.lineStyle(3, 0xffffff, 0.10);
+    g.strokeCircle(this.wheel.cx, this.wheel.cy, this.wheel.r-24);
   }
+}
 
-  detachCamera(){
-    if (this.cameraDetached || !this.car) return;
-    this.cameras.main.stopFollow();
-    this.cameraDetached = true;
-    this.debug('kamera voľná');
-  }
+// MENU -------------------------------------------------------------------
 
-  resumeCameraFollow(){
-    if (!this.car) return;
-    this.cameras.main.zoom = 1;
-    this.cameras.main.startFollow(this.car, true, 0.12, 0.12);
-    this.cameras.main.setDeadzone(40, 60);
-    this.cameraDetached = false;
-  }
+buildMenu(){
+  const w = VIEW_W, h = VIEW_H;
 
-  clampCamera(){
-    const cam = this.cameras.main;
-    const maxX = Math.max(0, this.worldW - VIEW_W / cam.zoom);
-    const maxY = Math.max(0, this.worldH - VIEW_H / cam.zoom);
-    cam.scrollX = clamp(cam.scrollX, 0, maxX);
-    cam.scrollY = clamp(cam.scrollY, 0, maxY);
-  }
+  this.menuRoot = this.add.container(0, 0);
+  const add = obj => { this.menuRoot.add(obj); return obj; };
 
-  updateWheelFromPointer(p){
-    const dx = p.x - this.wheel.cx;
-    const dy = p.y - this.wheel.cy;
-    const r = this.wheel.r - 16;
-    const len = Math.hypot(dx, dy) || 1;
-    const nx = dx / len;
-    const ny = dy / len;
-    this.wheelKnob.setPosition(this.wheel.cx + nx*r, this.wheel.cy + ny*r);
-    this.steer = clamp(dx / this.wheel.r, -1, 1);
-  }
+  add(this.add.rectangle(w/2, h/2+22, w*0.92, h*0.80, COLORS.panel, 0.95)
+    .setStrokeStyle(2, COLORS.panelBorder, 1).setScrollFactor(0).setDepth(2000));
 
-  // MENU -------------------------------------------------------------------
-  buildMenu(){
-    const w = VIEW_W, h = VIEW_H;
+  this.menuCarLabel = add(this.add.text(w/2, 150, 'AUTÁ', {
+    fontSize:'16px', fontStyle:'bold', color:COLORS.subtext
+  }).setOrigin(0.5).setScrollFactor(0).setDepth(2001));
 
-    this.menuRoot = this.add.container(0, 0);
-    const add = obj => { this.menuRoot.add(obj); return obj; };
-
-    add(this.add.rectangle(w/2, h/2+22, w*0.92, h*0.80, COLORS.panel, 0.95)
-      .setStrokeStyle(2, COLORS.panelBorder, 1).setScrollFactor(0).setDepth(2000));
-
-    this.menuCarLabel = add(this.add.text(w/2, 150, 'AUTÁ', {
-      fontSize:'16px', fontStyle:'bold', color:COLORS.subtext
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(2001));
-
-    // cards
-    this.carCards = [];
-    const carY = 250;
-    const cardW = 82, cardH = 110;
-    const xs = [78, 195, 312];
-    CARS.forEach((car, i)=>{
-      const cont = this.add.container(xs[i], carY);
-      const bg = this.add.rectangle(0, 0, cardW, cardH, COLORS.card, 1)
-        .setStrokeStyle(2, COLORS.cardBorder, 0.75).setInteractive({ useHandCursor:true });
-      const icon = this.add.image(0, -20, 'tex_car_menu').setTint(car.color);
-      if (car.id === 'motorka') icon.setScale(0.32, 0.48);
-      else icon.setScale(0.48, 0.48);
-      const name = this.add.text(0, 24, car.name, { fontSize:'14px', color:'#ffffff', fontStyle:'bold' }).setOrigin(0.5);
-      const speed = this.add.text(0, 44, `max ${car.maxSpeed}`, { fontSize:'11px', color:'#e8f4ff' }).setOrigin(0.5);
-      cont.add([bg, icon, name, speed]);
-      cont.setScrollFactor(0).setDepth(2002);
-      bg.on('pointerdown', ()=> {
-        this.selectedCarIndex = i;
-        this.selectedCar = CARS[i];
-        this.refreshMenuVisuals();
-      });
-      this.menuRoot.add(cont);
-      this.carCards.push({ cont, bg, icon, name, speed });
-    });
-
-    this.menuMapLabel = add(this.add.text(w/2, 410, 'MAPY', {
-      fontSize:'16px', fontStyle:'bold', color:COLORS.subtext
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(2001));
-
-    // map panel
-    this.mapPanel = this.add.container(w/2, 525).setScrollFactor(0).setDepth(2002);
-    const mapBgOuter = this.add.rectangle(0, 0, 284, 164, COLORS.ocean, 1)
-      .setStrokeStyle(2, COLORS.cardBorder, 0.9);
-    const clipFrame = this.add.graphics();
-    clipFrame.fillStyle(0xffffff, 1);
-    clipFrame.fillRoundedRect(-132, -72, 264, 144, 18);
-    const mask = clipFrame.createGeometryMask();
-
-    const ocean = this.add.rectangle(0, 0, 264, 144, COLORS.ocean, 1);
-    ocean.setMask(mask);
-
-    const europe = this.add.graphics();
-    europe.fillStyle(COLORS.land, 1);
-    // rough Europe blobs
-    europe.fillPoints([
-      new Phaser.Geom.Point(-112,-30), new Phaser.Geom.Point(-86,-62), new Phaser.Geom.Point(-44,-58),
-      new Phaser.Geom.Point(-16,-38), new Phaser.Geom.Point(24,-40), new Phaser.Geom.Point(60,-52),
-      new Phaser.Geom.Point(104,-32), new Phaser.Geom.Point(116,8), new Phaser.Geom.Point(84,28),
-      new Phaser.Geom.Point(30,20), new Phaser.Geom.Point(-10,42), new Phaser.Geom.Point(-42,20),
-      new Phaser.Geom.Point(-76,30), new Phaser.Geom.Point(-104,10)
-    ], true);
-    // Iberia/Italy/Balkans touches
-    europe.fillPoints([new Phaser.Geom.Point(-88,16), new Phaser.Geom.Point(-68,18), new Phaser.Geom.Point(-58,34), new Phaser.Geom.Point(-76,48), new Phaser.Geom.Point(-94,40)], true);
-    europe.fillPoints([new Phaser.Geom.Point(0,28), new Phaser.Geom.Point(10,54), new Phaser.Geom.Point(2,68), new Phaser.Geom.Point(-8,52)], true);
-    europe.fillPoints([new Phaser.Geom.Point(22,18), new Phaser.Geom.Point(52,18), new Phaser.Geom.Point(62,40), new Phaser.Geom.Point(30,44)], true);
-    europe.setMask(mask);
-
-    const slShape = this.add.graphics();
-    slShape.fillStyle(0xdfe96b, 1);
-    slShape.lineStyle(2, 0xfff59a, 1);
-    // slightly Slovenia-like polygon placed in Balkans area
-    const slPts = [
-      new Phaser.Geom.Point(10, 26), new Phaser.Geom.Point(28, 22), new Phaser.Geom.Point(42, 28),
-      new Phaser.Geom.Point(40, 40), new Phaser.Geom.Point(24, 46), new Phaser.Geom.Point(8, 40)
-    ];
-    slShape.fillPoints(slPts, true);
-    slShape.strokePoints(slPts, true);
-    slShape.setMask(mask);
-
-    const slHit = this.add.zone(25, 34, 48, 32).setRectangleDropZone(48, 32).setInteractive({useHandCursor:true});
-    slHit.on('pointerdown', ()=>{
-      this.selectedMap = MAPS.si;
+  this.carCards = [];
+  const carY = 250;
+  const cardW = 82, cardH = 110;
+  const xs = [78, 195, 312];
+  CARS.forEach((car, i)=>{
+    const cont = this.add.container(xs[i], carY);
+    const bg = this.add.rectangle(0, 0, cardW, cardH, COLORS.card, 1)
+      .setStrokeStyle(2, COLORS.cardBorder, 0.95).setInteractive({ useHandCursor:true });
+    const tex = car.id === 'taxi' ? 'car_taxi' : car.id === 'motorka' ? 'car_moto' : 'car_auto';
+    const icon = this.add.image(0, -18, tex);
+    if (car.id === 'motorka') icon.setScale(0.46);
+    else icon.setScale(0.50);
+    const name = this.add.text(0, 24, car.name, { fontSize:'14px', color:'#ffffff', fontStyle:'bold' }).setOrigin(0.5);
+    const speed = this.add.text(0, 44, `max ${car.maxSpeed}`, { fontSize:'11px', color:'#e8f4ff' }).setOrigin(0.5);
+    cont.add([bg, icon, name, speed]);
+    cont.setScrollFactor(0).setDepth(2002);
+    bg.on('pointerdown', ()=> {
+      this.selectedCarIndex = i;
+      this.selectedCar = CARS[i];
       this.refreshMenuVisuals();
     });
+    this.menuRoot.add(cont);
+    this.carCards.push({ cont, bg, icon, name, speed });
+  });
 
-    const worldTag = this.add.rectangle(-88, -52, 72, 24, 0x234669, 1).setStrokeStyle(1, 0xa4d0ff, 1);
-    const worldTxt = this.add.text(-88, -52, '↔ svetadiely', { fontSize:'12px', color:'#ffffff' }).setOrigin(0.5);
-    const slTxt = this.add.text(48, 52, 'Slovinsko', { fontSize:'16px', color:'#ffffff', fontStyle:'bold' }).setOrigin(0.5);
+  this.menuMapLabel = add(this.add.text(w/2, 410, 'MAPY', {
+    fontSize:'16px', fontStyle:'bold', color:COLORS.subtext
+  }).setOrigin(0.5).setScrollFactor(0).setDepth(2001));
 
-    this.mapPanel.add([mapBgOuter, ocean, europe, slShape, slHit, worldTag, worldTxt, slTxt, clipFrame]);
-    this.menuRoot.add(this.mapPanel);
+  this.mapPanel = this.add.container(w/2, 525).setScrollFactor(0).setDepth(2002);
+  const mapBgOuter = this.add.rectangle(0, 0, 284, 164, COLORS.ocean, 1)
+    .setStrokeStyle(2, COLORS.cardBorder, 0.95);
+  const europeImg = this.add.image(0, 0, 'atlas_europe');
+  const slGlow = this.add.graphics();
+  this.drawSloveniaOutline(slGlow, 22, 25, 0xfff0a0, 0xffd94d);
+  const slHit = this.add.zone(23, 25, 54, 28).setInteractive({ useHandCursor:true });
+  slHit.on('pointerdown', ()=>{
+    this.selectedMap = MAPS.si;
+    this.refreshMenuVisuals();
+  });
+  const locked = [];
+  [
+    { x:-90, y:-38, name:'Španielsko' },
+    { x:-34, y:-18, name:'Francúzsko' },
+    { x:16, y:-48, name:'Nemecko' },
+    { x:-2, y:36, name:'Taliansko' },
+    { x:90, y:-4, name:'Rumunsko' }
+  ].forEach((p)=>{
+    locked.push(this.add.text(p.x, p.y, '🔒', { fontSize:'17px' }).setOrigin(0.5));
+    locked.push(this.add.text(p.x, p.y + 18, p.name, { fontSize:'9px', color:'#d6e6ff' }).setOrigin(0.5));
+  });
+  const slTxt = this.add.text(48, 52, 'Slovinsko', { fontSize:'16px', color:'#fff7bf', fontStyle:'bold' }).setOrigin(0.5);
+  const worldTag = this.add.text(-92, -56, '← svetadiely', {
+    fontSize:'11px', color:'#c6e6ff', backgroundColor:'#15334f', padding:{left:6,right:6,top:3,bottom:3}
+  }).setOrigin(0.5);
+  this.mapPanel.add([mapBgOuter, europeImg, slGlow, slHit, slTxt, worldTag, ...locked]);
+  this.menuRoot.add(this.mapPanel);
 
-    this.selectionText = add(this.add.text(w/2, 630, '', {
-      fontSize:'16px', color:'#fff'
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(2002));
+  this.selectionText = add(this.add.text(w/2, 630, '', {
+    fontSize:'16px', color:'#fff'
+  }).setOrigin(0.5).setScrollFactor(0).setDepth(2002));
 
-    this.btnStart = add(this.add.rectangle(w/2, 705, 212, 58, 0x2bdc4a, 1)
-      .setInteractive({ useHandCursor:true }).setScrollFactor(0).setDepth(2002));
-    this.btnStartTxt = add(this.add.text(w/2, 705, 'ŠTART', {
-      fontSize:'22px', fontStyle:'bold', color:'#111'
-    }).setOrigin(0.5).setScrollFactor(0).setDepth(2003));
-    this.btnStart.on('pointerdown', ()=> this.startGame());
-  }
+  this.btnStart = add(this.add.rectangle(w/2, 705, 212, 58, 0x2bdc4a, 1)
+    .setInteractive({ useHandCursor:true }).setScrollFactor(0).setDepth(2002));
+  this.btnStartTxt = add(this.add.text(w/2, 705, 'ŠTART', {
+    fontSize:'22px', fontStyle:'bold', color:'#111'
+  }).setOrigin(0.5).setScrollFactor(0).setDepth(2003));
+  this.btnStart.on('pointerdown', ()=> this.startGame());
+}
 
-  refreshMenuVisuals(){
-    this.carCards.forEach((card, i)=>{
-      const selected = i === this.selectedCarIndex;
-      card.bg.setFillStyle(selected ? COLORS.cardSelected : COLORS.card, 1);
-      card.bg.setStrokeStyle(selected ? 3 : 2, selected ? 0xffffff : COLORS.cardBorder, selected ? 1 : 0.75);
-      card.name.setColor('#ffffff');
-      card.speed.setColor('#e8f4ff');
-    });
-    this.selectionText.setText(`Auto: ${this.selectedCar.name}   •   Mapa: ${this.selectedMap.name}`);
-  }
+refreshMenuVisuals(){
+  this.carCards.forEach((card, i)=>{
+    const selected = i === this.selectedCarIndex;
+    card.bg.setFillStyle(selected ? COLORS.cardSelected : COLORS.card, 1);
+    card.bg.setStrokeStyle(selected ? 3 : 2, 0xffffff, selected ? 1 : 0.85);
+    card.name.setColor('#ffffff');
+    card.speed.setColor('#e8f4ff');
+  });
+  this.selectionText.setText(`Auto: ${this.selectedCar.name}   •   Mapa: ${this.selectedMap.name}`);
+}
 
   setState(s){
     this.state = s;
@@ -422,7 +438,7 @@ class MainScene extends Phaser.Scene {
     const playing = s === 'playing';
     this.menuRoot.setVisible(showMenu);
 
-    [this.wheelBase, this.wheelRing, this.wheelKnob, this.gasBtn, this.gasTxt].forEach(o=>o.setVisible(playing));
+    [this.wheelBase, this.wheelRing, this.wheelSpokes, this.wheelKnob, this.gasBtn, this.gasInner, this.gasTxt].forEach(o=>o.setVisible(playing));
     if (showMenu){
       this.uiInfo.setText('Vyber auto a mapu, potom štart.');
       this.debug('');
@@ -568,8 +584,8 @@ class MainScene extends Phaser.Scene {
     const wMul = this.selectedCar.widthMul || 1;
     const hMul = this.selectedCar.heightMul || 1;
 
-    this.car = this.physics.add.image(sx, sy, 'tex_car_game');
-    this.car.setTint(this.selectedCar.color);
+    const tex = this.selectedCar.id === 'taxi' ? 'car_taxi' : this.selectedCar.id === 'motorka' ? 'car_moto' : 'car_auto';
+    this.car = this.physics.add.image(sx, sy, tex);
     this.car.setDisplaySize(baseW*wMul, baseH*hMul);
     this.car.body.setSize(baseW*wMul, baseH*hMul, true);
     this.car.setDrag(320, 320);
@@ -596,10 +612,12 @@ class MainScene extends Phaser.Scene {
       this.debug('spúšťam hru...');
       this.money = 0;
       this.steer = 0;
+      this.wheelAngle = 0;
       this.wheel.active = false;
       this.wheel.id = null;
-      this.wheelKnob.setPosition(this.wheel.cx, this.wheel.cy - (this.wheel.r-16));
+      this.renderWheelVisual();
       this.touch.gas = false;
+      this.touch.gasId = null;
 
       this.buildWorld(this.selectedMap);
       this.uiInfo.setText(`Mapa: ${this.selectedMap.name} • Auto: ${this.selectedCar.name}`);
@@ -641,24 +659,19 @@ class MainScene extends Phaser.Scene {
     this.uiMoney.setText(`Peníze: ${this.money}`);
     if (this.state !== 'playing' || !this.car) return;
 
-    const gas = this.touch.gas || this.cursors.up.isDown;
 
-    let kbSteer = 0;
-    if (this.cursors.left.isDown) kbSteer -= 1;
-    if (this.cursors.right.isDown) kbSteer += 1;
+const gas = this.touch.gas || this.cursors.up.isDown;
+const kbSteer = (this.cursors.left.isDown ? -1 : 0) + (this.cursors.right.isDown ? 1 : 0);
 
-    let steer = clamp(this.steer + kbSteer, -1, 1);
+let steer = this.steer;
+if (!this.wheel.active && kbSteer !== 0){
+  steer = kbSteer;
+}
 
-    if (!this.wheel.active && kbSteer === 0){
-      this.steer = Phaser.Math.Linear(this.steer, 0, 0.12);
-      steer = this.steer;
-    }
-
-    const speed = this.car.body.speed || 0;
-    const speedN = clamp(speed / (this.selectedCar.maxSpeed || 240), 0, 1);
-
-    const turnSpeed = 260;
-    this.car.body.setAngularVelocity(steer * turnSpeed * speedN);
+const speed = this.car.body.speed || 0;
+const speedN = clamp(speed / this.selectedCar.maxSpeed, 0, 1);
+const turnSpeed = 280;
+this.car.body.setAngularVelocity(steer * turnSpeed * speedN);
 
     if (gas){
       this.resumeCameraFollow();
@@ -672,32 +685,78 @@ class MainScene extends Phaser.Scene {
     }
   }
 
-  makeCarTexture(){
-    if (!this.textures.exists('tex_car_game')){
-      const g = this.add.graphics();
-      g.fillStyle(0xffffff,1);
-      g.fillRoundedRect(0,0,34,54,8);
-      g.fillStyle(0x7a7a7a,1);
-      g.fillRect(6,8,22,14);
-      g.fillStyle(0x202020,1);
-      g.fillCircle(8,10,3); g.fillCircle(26,10,3); g.fillCircle(8,44,3); g.fillCircle(26,44,3);
-      g.generateTexture('tex_car_game',34,54);
-      g.destroy();
-    }
-    if (!this.textures.exists('tex_car_menu')){
-      const g = this.add.graphics();
-      g.fillStyle(0xffffff,1);
-      g.fillRoundedRect(0,0,44,72,12);
-      g.fillStyle(0x6f6f6f,1);
-      g.fillRoundedRect(8,10,28,20,6);
-      g.fillStyle(0x1f1f1f,1);
-      g.fillCircle(10,14,4); g.fillCircle(34,14,4); g.fillCircle(10,58,4); g.fillCircle(34,58,4);
-      g.generateTexture('tex_car_menu',44,72);
-      g.destroy();
-    }
-  }
 
-  makeFlagTexture(){
+makeCarTexture(key, w, h, bodyColor, stripeColor, moto=false){
+  if (this.textures.exists(key)) return;
+  const g = this.add.graphics();
+  if (moto){
+    g.fillStyle(0x111111, 1).fillCircle(w * 0.35, h * 0.78, 8).fillCircle(w * 0.65, h * 0.78, 8);
+    g.fillStyle(bodyColor, 1).fillRoundedRect(w * 0.36, h * 0.16, w * 0.28, h * 0.52, 10);
+    g.fillStyle(stripeColor, 0.95).fillRect(w * 0.44, h * 0.22, w * 0.12, h * 0.24);
+    g.fillStyle(0x7fc8ff, 0.92).fillRoundedRect(w * 0.39, h * 0.48, w * 0.22, h * 0.12, 5); // rear window
+    g.lineStyle(4, 0x333333, 1).lineBetween(w * 0.28, h * 0.32, w * 0.72, h * 0.32).lineBetween(w * 0.36, h * 0.68, w * 0.64, h * 0.68);
+    g.fillStyle(0xff3333, 0.95).fillCircle(w * 0.50, h * 0.72, 4); // one rear light
+  } else {
+    g.fillStyle(0x111111, 1).fillCircle(w * 0.23, h * 0.2, 8).fillCircle(w * 0.77, h * 0.2, 8).fillCircle(w * 0.23, h * 0.8, 8).fillCircle(w * 0.77, h * 0.8, 8);
+    g.fillStyle(bodyColor, 1).fillRoundedRect(w * 0.18, h * 0.08, w * 0.64, h * 0.84, 16);
+    g.fillStyle(0x7fc8ff, 0.92).fillRoundedRect(w * 0.28, h * 0.54, w * 0.44, h * 0.18, 8); // rear window
+    g.fillStyle(stripeColor, 0.95).fillRect(w * 0.43, h * 0.14, w * 0.14, h * 0.64);
+    g.fillStyle(0xff3333, 0.9).fillRect(w * 0.25, h * 0.76, 8, 8).fillRect(w * 0.67, h * 0.76, 8, 8);
+  }
+  g.generateTexture(key, w, h);
+  g.destroy();
+}
+
+drawSloveniaOutline(g, cx, cy, stroke, fill){
+  g.clear();
+  g.fillStyle(fill, 0.22);
+  g.lineStyle(2, stroke, 1);
+  const pts = [
+    [-22, -3],[-17,-8],[-10,-10],[-2,-12],[8,-10],[15,-7],[22,-2],[20,3],[12,7],[4,8],[-3,11],[-12,10],[-18,6],[-22,1]
+  ];
+  g.beginPath();
+  g.moveTo(cx + pts[0][0], cy + pts[0][1]);
+  for (let i=1;i<pts.length;i++) g.lineTo(cx + pts[i][0], cy + pts[i][1]);
+  g.closePath();
+  g.fillPath();
+  g.strokePath();
+}
+
+makeEuropeTexture(key, w, h){
+  if (this.textures.exists(key)) return;
+  const g = this.add.graphics();
+  g.fillStyle(0x3f86d9, 1).fillRoundedRect(0, 0, w, h, 18);
+
+  const poly = (pts, fill)=>{
+    g.fillStyle(fill, 1);
+    g.beginPath();
+    g.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length; i++) g.lineTo(pts[i][0], pts[i][1]);
+    g.closePath();
+    g.fillPath();
+    g.lineStyle(1, 0xe9fff0, 0.34).strokePath();
+  };
+
+  poly([[30,102],[46,86],[64,80],[76,88],[70,104],[52,114],[36,112]], 0x5fb95a);
+  poly([[64,84],[86,70],[116,68],[132,74],[134,90],[116,102],[86,100],[72,94]], 0x67c164);
+  poly([[116,66],[136,56],[152,62],[154,82],[138,94],[122,88]], 0x72ca6d);
+  poly([[124,96],[148,92],[168,102],[170,118],[152,130],[132,120]], 0x6bc566);
+  poly([[104,102],[122,108],[128,146],[116,150],[98,122]], 0x62bb5d);
+  poly([[148,102],[170,100],[184,108],[182,120],[166,126],[150,118]], 0x80d879);
+  poly([[156,62],[188,54],[220,64],[234,82],[226,104],[198,106],[176,94],[162,82]], 0x73c76f);
+  poly([[110,28],[126,18],[150,18],[160,34],[150,44],[128,42]], 0x79cf72);
+  poly([[142,138],[156,136],[166,146],[164,160],[150,162],[142,152]], 0x69bf63);
+  g.fillStyle(0xffe069, 0.28);
+  g.lineStyle(2, 0xfff18c, 1);
+  g.beginPath();
+  g.moveTo(150, 106); g.lineTo(156, 101); g.lineTo(164, 99); g.lineTo(172, 101); g.lineTo(179, 104); g.lineTo(184, 108); g.lineTo(182, 113); g.lineTo(174, 116); g.lineTo(166, 116); g.lineTo(159, 119); g.lineTo(152, 117); g.lineTo(148, 112); g.closePath();
+  g.fillPath();
+  g.strokePath();
+  g.generateTexture(key, w, h);
+  g.destroy();
+}
+
+makeFlagTexture(){
     if (this.textures.exists('tex_flag')) return;
     const g = this.add.graphics();
     g.lineStyle(3, 0xffffff, 1);
