@@ -90,11 +90,14 @@ class MainScene extends Phaser.Scene {
     this.audioCtx = null;
     this.engineOsc = null;
     this.engineGain = null;
+    this.engineFilter = null;
+    this.audioUnlocked = false;
+    this.finished = false;
   }
 
   create(){
     document.title = 'Šoférujeme 4';
-    this.input.addPointer(3);
+    this.input.addPointer(5);
 
     this.makeCarTexture('car_taxi', 60, 92, 0xffd800, 0x111111, false);
     this.makeCarTexture('car_moto', 40, 84, 0xff4fa3, 0xffffff, true);
@@ -143,8 +146,7 @@ class MainScene extends Phaser.Scene {
 
     this.gasBtn.on('pointerdown', (p)=> {
       if (this.state !== 'playing') return;
-      this.ensureAudio();
-      this.resumeAudio();
+      this.unlockAudioOnGesture();
       this.resumeAudio();
       this.touch.gas = true;
       this.touch.gasId = p.id;
@@ -153,7 +155,7 @@ class MainScene extends Phaser.Scene {
     });
     this.revBtn.on('pointerdown', (p)=> {
       if (this.state !== 'playing') return;
-      this.ensureAudio();
+      this.unlockAudioOnGesture();
       this.resumeAudio();
       this.touch.reverse = true;
       this.touch.reverseId = p.id;
@@ -184,7 +186,7 @@ class MainScene extends Phaser.Scene {
     this.cursors = this.input.keyboard.createCursorKeys();
 
     this.input.on('pointerdown', (p)=>{
-      this.ensureAudio();
+      this.unlockAudioOnGesture();
       this.resumeAudio();
       if (this.state === 'playing') {
         const dx = p.x - this.wheel.cx;
@@ -404,11 +406,11 @@ class MainScene extends Phaser.Scene {
 
     this.worldView = this.add.container(0,0);
     const worldImg = this.add.image(0,0,'atlas_world');
-    const europeHit = this.add.zone(28,-26,70,54).setInteractive({ useHandCursor:true });
+    const europeHit = this.add.zone(12,-40,70,54).setInteractive({ useHandCursor:true });
     europeHit.on('pointerdown', ()=> { this.mapStage = 'europe'; this.refreshMenuVisuals(); });
-    const europeTag = this.add.text(28,-63,'Európa',{ fontSize:'12px', color:'#fff7bf', fontStyle:'bold', backgroundColor:'#1b4d78', padding:{left:4,right:4,top:2,bottom:2} }).setOrigin(0.5);
+    const europeTag = this.add.text(12,-74,'Európa',{ fontSize:'12px', color:'#fff7bf', fontStyle:'bold', backgroundColor:'#1b4d78', padding:{left:4,right:4,top:2,bottom:2} }).setOrigin(0.5);
     const europeGlow = this.add.graphics();
-    europeGlow.lineStyle(2, 0xffef92, 1).strokeEllipse(28,-26,64,46);
+    europeGlow.lineStyle(2, 0xffef92, 1).strokeEllipse(12,-40,64,46);
     const locks = [];
     [
       {x:-90,y:-18,t:'S. Amerika'}, {x:-56,y:34,t:'J. Amerika'}, {x:100,y:-42,t:'Ázia'}, {x:82,y:28,t:'Afrika'}, {x:118,y:58,t:'Austrália'}
@@ -421,7 +423,7 @@ class MainScene extends Phaser.Scene {
     const slGlow = this.add.graphics();
     this.drawSloveniaOutline(slGlow, 22, 25, 0xfff0a0, 0xffd94d);
     const slHit = this.add.zone(23, 25, 54, 28).setInteractive({ useHandCursor:true });
-    slHit.on('pointerdown', ()=> { this.selectedMap = MAPS.si; this.refreshMenuVisuals(); });
+    slHit.on('pointerdown', ()=> { this.unlockAudioOnGesture(); this.selectedMap = MAPS.si; this.refreshMenuVisuals(); this.startGame(); });
     const backTag = this.add.text(-92, -56, '', { fontSize:'1px', color:'#000000' }).setOrigin(0.5);
     const locked2 = [];
     [
@@ -548,7 +550,9 @@ class MainScene extends Phaser.Scene {
     try {
       this.ensureAudio();
       this.touch.gas = false; this.touch.gasId = null;
+      this.touch.reverse = false; this.touch.reverseId = null;
       this.stopEngineSound();
+      this.finished = false;
       this.buildWorld(this.selectedMap);
       this.setState('playing');
     } finally { this.starting = false; }
@@ -585,7 +589,9 @@ class MainScene extends Phaser.Scene {
   }
 
   onFinish(){
-    if (this.state !== 'playing') return;
+    if (this.state !== 'playing' || this.finished) return;
+    this.finished = true;
+    if (this.finishZone){ this.finishZone.destroy(); this.finishZone = null; }
     this.money += 100;
     this.best = Math.max(this.best, this.money);
     this.uiInfo.setText(`🏁 CÍL! Peníze: ${this.money} (best: ${this.best})`);
@@ -599,6 +605,7 @@ class MainScene extends Phaser.Scene {
   update(_time, delta){
     this.uiMoney.setText(`Peníze: ${this.money}`);
     if (this.state !== 'playing' || !this.car) return;
+    if (this.finished){ this.stopEngineSound(); return; }
 
     const gas = this.touch.gas || this.cursors.up.isDown;
     const reverse = this.touch.reverse || this.cursors.down.isDown;
@@ -658,16 +665,36 @@ class MainScene extends Phaser.Scene {
     if (this.audioReady) return;
     const Ctx = window.AudioContext || window.webkitAudioContext;
     if (!Ctx) return;
-    this.audioCtx = new Ctx();
+    this.audioCtx = new Ctx({ latencyHint:'interactive' });
     this.audioReady = true;
+  }
+
+  unlockAudioOnGesture(){
+    this.ensureAudio();
+    if (!this.audioCtx) return;
+    try {
+      if (this.audioCtx.state === 'suspended') this.audioCtx.resume();
+      const t = this.audioCtx.currentTime;
+      const osc = this.audioCtx.createOscillator();
+      const gain = this.audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = 220;
+      gain.gain.value = 0.00001;
+      osc.connect(gain);
+      gain.connect(this.audioCtx.destination);
+      osc.start(t);
+      osc.stop(t + 0.03);
+      this.audioUnlocked = true;
+    } catch(e) {}
   }
 
   resumeAudio(){
     if (!this.audioCtx) return;
-    if (this.audioCtx.state === 'suspended') this.audioCtx.resume();
+    try { if (this.audioCtx.state === 'suspended') this.audioCtx.resume(); } catch(e) {}
   }
 
   startEngineSound(){
+    this.unlockAudioOnGesture();
     if (!this.audioCtx) return;
     if (this.audioCtx.state === 'suspended') this.audioCtx.resume();
     if (this.engineOsc) return;
@@ -716,38 +743,51 @@ class MainScene extends Phaser.Scene {
   playWinTune(){
     if (!this.audioCtx) return;
     this.resumeAudio();
-    const melody = [
-      [659.25,0.00,0.28,'triangle'], [783.99,0.28,0.28,'triangle'], [1046.5,0.56,0.36,'triangle'],
-      [783.99,0.94,0.26,'square'], [880.0,1.20,0.24,'square'], [987.77,1.44,0.28,'triangle'],
-      [1046.5,1.74,0.38,'triangle'], [1318.5,2.12,0.52,'sine']
-    ];
     const start = this.audioCtx.currentTime + 0.02;
-    melody.forEach(([freq,off,dur,wave])=>{
+    const melody = [
+      [523.25,0.00,0.40,'triangle',0.06],
+      [659.25,0.42,0.40,'triangle',0.06],
+      [783.99,0.84,0.52,'triangle',0.06],
+      [659.25,1.38,0.34,'square',0.045],
+      [783.99,1.74,0.34,'square',0.045],
+      [1046.5,2.10,0.72,'triangle',0.07],
+      [1318.5,2.88,0.95,'sine',0.08]
+    ];
+    melody.forEach(([freq,off,dur,wave,peak])=>{
       const osc = this.audioCtx.createOscillator();
       const gain = this.audioCtx.createGain();
       osc.type = wave;
-      osc.frequency.value = freq;
-      gain.gain.value = 0.0001;
+      osc.frequency.setValueAtTime(freq, start + off);
       osc.connect(gain); gain.connect(this.audioCtx.destination);
+      gain.gain.value = 0.0001;
       const t0 = start + off;
       osc.start(t0);
-      gain.gain.exponentialRampToValueAtTime(0.065, t0 + 0.03);
-      gain.gain.setTargetAtTime(0.03, t0 + dur*0.45, 0.05);
+      gain.gain.exponentialRampToValueAtTime(peak, t0 + 0.04);
+      gain.gain.setTargetAtTime(peak * 0.45, t0 + dur * 0.45, 0.08);
       gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-      osc.stop(t0 + dur + 0.03);
+      osc.stop(t0 + dur + 0.04);
     });
-    [0,0.32,0.64,0.96,1.28,1.60,1.92,2.24].forEach((off, i)=>{
-      const osc = this.audioCtx.createOscillator();
+    const popTimes = [1.62,1.78,1.94,2.16,2.34,2.52,3.08,3.22,3.36,3.52];
+    popTimes.forEach((off,i)=>{
+      const buffer = this.audioCtx.createBuffer(1, Math.floor(this.audioCtx.sampleRate * 0.09), this.audioCtx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let n=0; n<data.length; n++){
+        const env = 1 - n / data.length;
+        data[n] = (Math.random()*2 - 1) * env * (0.35 + (i%3)*0.08);
+      }
+      const src = this.audioCtx.createBufferSource();
+      const filter = this.audioCtx.createBiquadFilter();
       const gain = this.audioCtx.createGain();
-      osc.type = 'sine';
-      osc.frequency.value = 220 + (i%3)*35;
+      src.buffer = buffer;
+      filter.type = 'bandpass';
+      filter.frequency.value = 1400 + (i%4)*350;
       gain.gain.value = 0.0001;
-      osc.connect(gain); gain.connect(this.audioCtx.destination);
+      src.connect(filter); filter.connect(gain); gain.connect(this.audioCtx.destination);
       const t0 = start + off;
-      osc.start(t0);
-      gain.gain.exponentialRampToValueAtTime(0.018, t0 + 0.01);
-      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.18);
-      osc.stop(t0 + 0.2);
+      src.start(t0);
+      gain.gain.exponentialRampToValueAtTime(0.02, t0 + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.09);
+      src.stop(t0 + 0.10);
     });
   }
 
