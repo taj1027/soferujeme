@@ -93,17 +93,11 @@ class MainScene extends Phaser.Scene {
     this.engineGain = null;
     this.engineFilter = null;
     this.audioUnlocked = false;
-    this.isMobileAudio = /iPhone|iPad|iPod|Android|Mobile|CriOS|FxiOS/i.test(navigator.userAgent || '');
-    this.preferMediaAudio = this.isMobileAudio;
+    this.preferMediaAudio = false;
     this.mediaAudio = null;
     this.hornCooldownUntil = 0;
     this.finished = false;
-    this.finishCooldownUntil = 0;
     this.hornLoop = null;
-    this.hornOsc = null;
-    this.hornGain = null;
-    this.hornShakeLoop = null;
-    this.lastEngineAudioTick = 0;
   }
 
   create(){
@@ -144,15 +138,13 @@ class MainScene extends Phaser.Scene {
   buildControls(){
     this.gasBtn = this.add.circle(VIEW_W-82, VIEW_H-84, 54, 0x0c1117, 0.38).setInteractive().setScrollFactor(0).setDepth(1000);
     this.gasInner = this.add.circle(VIEW_W-82, VIEW_H-84, 38, 0x39d84d, 1).setScrollFactor(0).setDepth(1001);
-    this.gasTxt = this.add.text(VIEW_W-82, VIEW_H-84, '⬆', { fontSize:'34px', color:'#08250d', fontStyle:'bold', stroke:'#eaffef', strokeThickness:2, shadow:{ offsetX:0, offsetY:2, color:'#114d1b', blur:4, fill:true } }).setOrigin(0.5).setScrollFactor(0).setDepth(1002);
+    this.gasTxt = this.add.text(VIEW_W-82, VIEW_H-84, '↑', { fontSize:'28px', color:'#08250d' }).setOrigin(0.5).setScrollFactor(0).setDepth(1002);
     this.revBtn = this.add.circle(VIEW_W-82, VIEW_H-170, 32, 0x0c1117, 0.34).setInteractive().setScrollFactor(0).setDepth(1000);
     this.revInner = this.add.circle(VIEW_W-82, VIEW_H-170, 22, 0xb7c0cb, 1).setScrollFactor(0).setDepth(1001);
-    this.revTxt = this.add.text(VIEW_W-82, VIEW_H-170, '⬇', { fontSize:'24px', color:'#142434', fontStyle:'bold', stroke:'#f4f8ff', strokeThickness:2, shadow:{ offsetX:0, offsetY:2, color:'#2c3f56', blur:4, fill:true } }).setOrigin(0.5).setScrollFactor(0).setDepth(1002);
+    this.revTxt = this.add.text(VIEW_W-82, VIEW_H-170, '↓', { fontSize:'18px', color:'#142434', fontStyle:'bold' }).setOrigin(0.5).setScrollFactor(0).setDepth(1002);
     this.hornBtn = this.add.circle(VIEW_W/2, VIEW_H-108, 28, 0x0c1117, 0.36).setInteractive().setScrollFactor(0).setDepth(1000);
     this.hornInner = this.add.circle(VIEW_W/2, VIEW_H-108, 19, 0xffd04f, 1).setScrollFactor(0).setDepth(1001);
     this.hornTxt = this.add.text(VIEW_W/2, VIEW_H-108, '📣', { fontSize:'18px' }).setOrigin(0.5).setScrollFactor(0).setDepth(1002);
-    this.tweens.add({ targets:[this.gasInner,this.gasTxt], scale:1.08, duration:620, yoyo:true, repeat:-1, ease:'Sine.easeInOut' });
-    this.tweens.add({ targets:[this.revInner,this.revTxt], scale:1.07, duration:760, yoyo:true, repeat:-1, ease:'Sine.easeInOut' });
 
     this.wheelBase = this.add.circle(this.wheel.cx, this.wheel.cy, this.wheel.r, 0x0c1117, 0.40).setScrollFactor(0).setDepth(1000);
     this.wheelRing = this.add.circle(this.wheel.cx, this.wheel.cy, this.wheel.r-10, 0xffffff, 0.08).setScrollFactor(0).setDepth(1001);
@@ -456,11 +448,11 @@ class MainScene extends Phaser.Scene {
 
     this.worldView = this.add.container(0,0);
     const worldImg = this.add.image(0,0,'atlas_world');
-    const europeHit = this.add.zone(0,-34,70,54).setInteractive({ useHandCursor:true });
+    const europeHit = this.add.zone(0,-28,70,54).setInteractive({ useHandCursor:true });
     europeHit.on('pointerdown', ()=> { this.mapStage = 'europe'; this.refreshMenuVisuals(); });
-    const europeTag = this.add.text(0,-66,'Európa',{ fontSize:'12px', color:'#fff7bf', fontStyle:'bold', backgroundColor:'#1b4d78', padding:{left:4,right:4,top:2,bottom:2} }).setOrigin(0.5);
+    const europeTag = this.add.text(0,-60,'Európa',{ fontSize:'12px', color:'#fff7bf', fontStyle:'bold', backgroundColor:'#1b4d78', padding:{left:4,right:4,top:2,bottom:2} }).setOrigin(0.5);
     const europeGlow = this.add.graphics();
-    europeGlow.lineStyle(2, 0xffef92, 1).strokeEllipse(0,-34,64,46);
+    europeGlow.lineStyle(2, 0xffef92, 1).strokeEllipse(0,-28,64,46);
     const locks = [];
     [
       {x:-90,y:-18,t:'S. Amerika'}, {x:-56,y:34,t:'J. Amerika'}, {x:100,y:-42,t:'Ázia'}, {x:82,y:28,t:'Afrika'}, {x:118,y:58,t:'Austrália'}
@@ -605,7 +597,6 @@ class MainScene extends Phaser.Scene {
       this.stopHornLoop();
       this.stopEngineSound();
       this.finished = false;
-    this.finishCooldownUntil = 0;
     this.hornLoop = null;
       this.driveSpeed = 0;
       this.buildWorld(this.selectedMap);
@@ -648,21 +639,28 @@ class MainScene extends Phaser.Scene {
   }
 
   onFinish(){
-    if (this.state !== 'playing') return;
-    const now = this.time.now || 0;
-    if (now < this.finishCooldownUntil) return;
-    this.finishCooldownUntil = now + 1600;
+    if (this.state !== 'playing' || this.finished) return;
+    this.finished = true;
+    if (this.finishZone){ this.finishZone.destroy(); this.finishZone = null; }
     this.money += 100;
     this.best = Math.max(this.best, this.money);
     this.uiInfo.setText(`🏁 CÍL! Peníze: ${this.money} (best: ${this.best})`);
     this.playWinTune();
     this.spawnFireworks();
-    this.shakeAndRipple(520, 0.0065);
+    this.shakeAndRipple(420, 0.006);
+    this.driveSpeed = 0;
+    if (this.car && this.car.body){ this.car.body.setVelocity(0,0); this.car.body.setAngularVelocity(0); }
+    this.touch.gas = false; this.touch.gasId = null;
+    this.touch.reverse = false; this.touch.reverseId = null;
+    this.touch.horn = false; this.touch.hornId = null;
+    this.stopHornLoop();
+    this.stopEngineSound();
   }
 
   update(_time, delta){
     this.uiMoney.setText(`Peníze: ${this.money}`);
     if (this.state !== 'playing' || !this.car) return;
+    if (this.finished){ this.stopEngineSound(); return; }
 
     const gas = this.touch.gas || this.cursors.up.isDown;
     const reverse = this.touch.reverse || this.cursors.down.isDown;
@@ -671,17 +669,13 @@ class MainScene extends Phaser.Scene {
     const dt = Math.min(delta / 1000, 0.033);
     const driving = gas || reverse;
 
-    if (driving || Math.abs(steer) > 0.01) this.resumeCameraFollow();
-
-    if (Math.abs(kbSteer) > 0.02 && !this.wheel.active){
-      this.steer = clamp(this.steer + kbSteer * dt * 2.1, -1, 1);
-      this.wheelAngle = this.steer * this.wheelMaxAngle;
-      this.renderWheelVisual();
+    if (driving){
+      this.resumeCameraFollow();
     }
 
-    const desiredRot = Phaser.Math.DegToRad(this.wheelAngle);
-    this.car.rotation = desiredRot;
-    if (this.car.body) this.car.body.setAngularVelocity(0);
+    if (Math.abs(kbSteer) > 0.02){
+      this.car.rotation += Phaser.Math.DegToRad(kbSteer * 150 * dt * (reverse ? -1 : 1));
+    }
 
     const accel = this.selectedCar.accel || 520;
     const brake = accel * 1.45;
@@ -711,67 +705,64 @@ class MainScene extends Phaser.Scene {
 
   startHornLoop(){
     this.stopHornLoop();
-    this.unlockAudioOnGesture();
-    if (this.preferMediaAudio && this.mediaAudio?.horn){
-      try {
-        this.mediaAudio.horn.loop = true;
-        this.mediaAudio.horn.currentTime = 0;
-        this.mediaAudio.horn.volume = 0.95;
-        this.mediaAudio.horn.playbackRate = 1;
-        this.mediaAudio.horn.play().catch(()=>{});
-      } catch(e){}
-    } else if (this.audioCtx) {
-      this.resumeAudio();
-      try {
-        const t = this.audioCtx.currentTime + 0.005;
-        this.hornOsc = this.audioCtx.createOscillator();
-        this.hornGain = this.audioCtx.createGain();
-        this.hornOsc.type = 'sawtooth';
-        this.hornOsc.frequency.setValueAtTime(356, t);
-        this.hornGain.gain.setValueAtTime(0.0001, t);
-        this.hornGain.gain.exponentialRampToValueAtTime(0.085, t + 0.03);
-        this.hornOsc.connect(this.hornGain);
-        this.hornGain.connect(this.audioCtx.destination);
-        this.hornOsc.start(t);
-      } catch(e){}
-    }
-    this.shakeAndRipple(140, 0.0028);
-    this.hornShakeLoop = this.time.addEvent({
-      delay: 120,
+    this.playHorn(true);
+    this.shakeAndRipple(120, 0.0028);
+    this.hornLoop = this.time.addEvent({
+      delay: 180,
       loop: true,
       callback: ()=>{
         if (!this.touch.horn) { this.stopHornLoop(); return; }
+        this.playHorn(true);
         this.shakeAndRipple(120, 0.0028);
       }
     });
   }
 
   stopHornLoop(){
-    if (this.hornShakeLoop){ this.hornShakeLoop.remove(false); this.hornShakeLoop = null; }
-    if (this.preferMediaAudio && this.mediaAudio?.horn){
-      try { this.mediaAudio.horn.pause(); this.mediaAudio.horn.currentTime = 0; } catch(e){}
-    }
-    if (this.hornGain && this.audioCtx){
-      try {
-        const t = this.audioCtx.currentTime;
-        this.hornGain.gain.cancelScheduledValues(t);
-        this.hornGain.gain.setTargetAtTime(0.0001, t, 0.02);
-      } catch(e){}
-    }
-    if (this.hornOsc){
-      try { this.hornOsc.stop((this.audioCtx?.currentTime || 0) + 0.08); } catch(e){}
-    }
-    this.hornOsc = null;
-    this.hornGain = null;
+    if (this.hornLoop){ this.hornLoop.remove(false); this.hornLoop = null; }
+  }
+
+  shakeAndRipple(duration=180, intensity=0.0035){
+    if (this.cameras?.main) this.cameras.main.shake(duration, intensity, true);
+    const g = this.add.graphics().setScrollFactor(0).setDepth(1500);
+    const cx = VIEW_W/2, cy = VIEW_H/2;
+    const ripple = { r: 20, a: 0.28 };
+    const draw = ()=>{
+      g.clear();
+      g.lineStyle(6, 0xffffff, ripple.a); g.strokeCircle(cx, cy, ripple.r);
+      g.lineStyle(3, 0x7fc8ff, ripple.a * 0.8); g.strokeCircle(cx, cy, ripple.r * 0.72);
+    };
+    draw();
+    this.tweens.add({ targets:ripple, r:Math.max(VIEW_W, VIEW_H)*0.8, a:0, duration, ease:'Cubic.easeOut', onUpdate:draw, onComplete:()=>g.destroy() });
   }
 
   playHorn(looping=false){
-    if (looping) return this.startHornLoop();
     const now = this.time.now || 0;
-    if (now < this.hornCooldownUntil) return;
-    this.hornCooldownUntil = now + 220;
-    this.startHornLoop();
-    this.time.delayedCall(220, ()=>{ if (!this.touch.horn) this.stopHornLoop(); });
+    if (!looping && now < this.hornCooldownUntil) return;
+    if (!looping) this.hornCooldownUntil = now + 220;
+    if (!this.audioCtx && this.preferMediaAudio && this.mediaAudio?.horn){
+      try {
+        const a = this.mediaAudio.horn.cloneNode();
+        a.volume = 0.95;
+        a.play().catch(()=>{});
+      } catch(e){}
+      return;
+    }
+    if (!this.audioCtx) return;
+    this.resumeAudio();
+    const t = this.audioCtx.currentTime + 0.01;
+    [392, 330].forEach((f, i)=>{
+      const osc = this.audioCtx.createOscillator();
+      const gain = this.audioCtx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(f, t);
+      osc.connect(gain); gain.connect(this.audioCtx.destination);
+      const tt = t + i*0.03;
+      gain.gain.setValueAtTime(0.0001, tt);
+      gain.gain.exponentialRampToValueAtTime(0.09, tt + 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.0001, tt + 0.42);
+      osc.start(tt); osc.stop(tt + 0.45);
+    });
   }
 
   spawnFireworks(){
@@ -801,13 +792,11 @@ class MainScene extends Phaser.Scene {
 
   ensureAudio(){
     if (!this.audioReady) {
-      if (!this.isMobileAudio) {
-        const Ctx = window.AudioContext || window.webkitAudioContext;
-        if (Ctx) {
-          try { this.audioCtx = new Ctx({ latencyHint:'interactive' }); } catch(e) {}
-        }
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (Ctx) {
+        try { this.audioCtx = new Ctx({ latencyHint:'interactive' }); } catch(e) {}
       }
-      this.preferMediaAudio = this.isMobileAudio || !this.audioCtx;
+      if (!this.audioCtx) this.preferMediaAudio = true;
       this.audioReady = true;
     }
     if (!this.mediaAudio) this.prepareMediaAudio();
@@ -821,7 +810,7 @@ class MainScene extends Phaser.Scene {
       horn: this.makeAudioEl(this.makeHornDataUri()),
       win: this.makeAudioEl(this.makeWinDataUri())
     };
-    ['taxi','auto','motorka','horn'].forEach(k=>{ this.mediaAudio[k].loop = true; this.mediaAudio[k].preload = 'auto'; });
+    ['taxi','auto','motorka'].forEach(k=>{ this.mediaAudio[k].loop = true; this.mediaAudio[k].preload = 'auto'; });
   }
 
   makeAudioEl(src){
@@ -866,43 +855,51 @@ class MainScene extends Phaser.Scene {
   }
 
   makeEngineDataUri(baseHz){
-    const sr = 11025, dur = 0.36, n = Math.floor(sr * dur), data = new Float32Array(n);
+    const sr = 22050, dur = 1.2, n = Math.floor(sr * dur), data = new Float32Array(n);
     for (let i=0;i<n;i++){
       const t = i / sr;
-      const wobble = 1 + 0.02*Math.sin(2*Math.PI*2*t);
-      const f = baseHz * wobble;
-      const s = Math.sin(2*Math.PI*f*t) * 0.72 + Math.sin(2*Math.PI*f*2*t) * 0.18;
-      data[i] = Math.tanh(s * 0.82) * 0.42;
+      const f = baseHz * (1 + 0.06*Math.sin(2*Math.PI*3*t));
+      const s = Math.sin(2*Math.PI*f*t) * 0.58 + Math.sin(2*Math.PI*f*2*t) * 0.22 + Math.sin(2*Math.PI*f*3*t) * 0.12;
+      data[i] = Math.tanh(s * 0.9) * 0.45;
     }
     return this.encodeWav(data, sr);
   }
 
   makeHornDataUri(){
-    const sr = 11025, dur = 0.28, n = Math.floor(sr * dur), data = new Float32Array(n);
+    const sr = 22050, dur = 0.55, n = Math.floor(sr * dur), data = new Float32Array(n);
     for (let i=0;i<n;i++){
       const t = i / sr;
-      const s = Math.sin(2*Math.PI*356*t) * 0.72 + Math.sin(2*Math.PI*282*t) * 0.25;
-      data[i] = Math.tanh(s) * 0.68;
+      const env = Math.max(0, 1 - t / dur);
+      const s = Math.sin(2*Math.PI*392*t) * 0.5 + Math.sin(2*Math.PI*311*t) * 0.35;
+      data[i] = Math.tanh(s) * env * 0.7;
     }
     return this.encodeWav(data, sr);
   }
 
   makeWinDataUri(){
-    const sr = 11025, dur = 0.72, n = Math.floor(sr * dur), data = new Float32Array(n);
-    const notes = [523.25,659.25,783.99,523.25,659.25,783.99,1046.5];
-    const step = 0.095;
+    const sr = 22050, dur = 2.2, n = Math.floor(sr * dur), data = new Float32Array(n);
+    const notes = [523.25,659.25,783.99,1046.5,1318.5];
+    const times = [0,0.18,0.36,0.58,0.82,1.06,1.30,1.56];
     for (let i=0;i<n;i++){
       const t = i / sr;
       let s = 0;
-      notes.forEach((f, idx)=>{
-        const start = idx * step;
-        const end = start + 0.085;
+      for (let k=0;k<times.length;k++){
+        const start = times[k], end = start + 0.16;
         if (t >= start && t <= end){
           const env = Math.sin(Math.PI * ((t-start)/(end-start)));
-          s += (Math.sin(2*Math.PI*f*t) * 0.68 + Math.sin(2*Math.PI*f*2*t) * 0.14) * env;
+          const f = notes[k % notes.length];
+          s += (Math.sin(2*Math.PI*f*t) * 0.65 + Math.sin(2*Math.PI*f*2*t) * 0.18) * env;
+        }
+      }
+      const burstStarts = [1.22,1.44,1.66,1.88];
+      burstStarts.forEach((bs, idx)=>{
+        const bd = 0.12;
+        if (t >= bs && t <= bs + bd){
+          const env = 1 - ((t-bs)/bd);
+          s += (Math.random()*2 - 1) * env * (0.18 + idx*0.02);
         }
       });
-      data[i] = Math.max(-1, Math.min(1, s * 0.44));
+      data[i] = Math.max(-1, Math.min(1, s * 0.42));
     }
     return this.encodeWav(data, sr);
   }
@@ -911,7 +908,11 @@ class MainScene extends Phaser.Scene {
     if (!this.mediaAudio) return;
     Object.values(this.mediaAudio).forEach(a=>{
       try {
-        a.load?.();
+        a.muted = true;
+        a.currentTime = 0;
+        const p = a.play();
+        if (p && p.then) p.then(()=>{ a.pause(); a.currentTime = 0; a.muted = false; }).catch(()=>{ a.muted = false; });
+        else { a.pause(); a.currentTime = 0; a.muted = false; }
       } catch(e){}
     });
   }
@@ -922,6 +923,14 @@ class MainScene extends Phaser.Scene {
     if (!this.audioCtx) return;
     try {
       if (this.audioCtx.state === 'suspended') this.audioCtx.resume();
+      const t = this.audioCtx.currentTime;
+      const osc = this.audioCtx.createOscillator();
+      const gain = this.audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = 220;
+      gain.gain.value = 0.00001;
+      osc.connect(gain); gain.connect(this.audioCtx.destination);
+      osc.start(t); osc.stop(t + 0.03);
       this.audioUnlocked = true;
     } catch(e) {}
   }
@@ -990,38 +999,38 @@ class MainScene extends Phaser.Scene {
   }
 
   stopEngineSound(){
-    if (this.preferMediaAudio){
-      if (this.activeEngineAudio){
-        try { this.activeEngineAudio.pause(); } catch(e){}
-      }
-      return;
+    if (this.activeEngineAudio){
+      try { this.activeEngineAudio.pause(); this.activeEngineAudio.currentTime = 0; } catch(e) {}
+      this.activeEngineAudio = null;
     }
     if (!this.engineOsc || !this.audioCtx) return;
     const osc = this.engineOsc, gain = this.engineGain, t = this.audioCtx.currentTime;
     this.engineOsc = null; this.engineGain = null; this.engineFilter = null;
     try {
-      if (gain){ gain.gain.cancelScheduledValues(t); gain.gain.setTargetAtTime(0.0001, t, 0.03); }
-      osc.stop(t + 0.08);
+      gain.gain.cancelScheduledValues(t);
+      gain.gain.setValueAtTime(Math.max(gain.gain.value, 0.0001), t);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.08);
+      osc.stop(t + 0.1);
     } catch(e){}
   }
 
   playWinTune(){
-    if (this.preferMediaAudio && this.mediaAudio?.win){
-      [0, 360, 720].forEach((d)=>{
+    if (!this.audioCtx && this.preferMediaAudio && this.mediaAudio?.win){
+      [0, 520, 1040].forEach((d)=>{
         this.time.delayedCall(d, ()=>{ try { const a = this.mediaAudio.win.cloneNode(); a.volume = 0.95; a.play().catch(()=>{}); } catch(e){} });
       });
       return;
     }
     if (!this.audioCtx) return;
     this.resumeAudio();
-    [0, 0.38, 0.76].forEach((rep)=>{
+    [0, 0.62, 1.24].forEach((rep)=>{
       const start = this.audioCtx.currentTime + 0.02 + rep;
       const melody = [
-        [523.25,0.00,0.08,'triangle',0.07],
-        [659.25,0.08,0.08,'triangle',0.07],
-        [783.99,0.16,0.09,'triangle',0.07],
-        [1046.5,0.26,0.10,'triangle',0.08],
-        [1318.5,0.38,0.12,'sine',0.09]
+        [523.25,0.00,0.10,'triangle',0.07],
+        [659.25,0.10,0.10,'triangle',0.07],
+        [783.99,0.20,0.12,'triangle',0.07],
+        [1046.5,0.34,0.14,'triangle',0.075],
+        [1318.5,0.50,0.18,'sine',0.082]
       ];
       melody.forEach(([freq,off,dur,wave,peak])=>{
         const osc = this.audioCtx.createOscillator();
@@ -1032,10 +1041,10 @@ class MainScene extends Phaser.Scene {
         gain.gain.value = 0.0001;
         const t0 = start + off;
         osc.start(t0);
-        gain.gain.exponentialRampToValueAtTime(peak, t0 + 0.012);
-        gain.gain.setTargetAtTime(peak * 0.42, t0 + dur * 0.30, 0.03);
+        gain.gain.exponentialRampToValueAtTime(peak, t0 + 0.02);
+        gain.gain.setTargetAtTime(peak * 0.4, t0 + dur * 0.35, 0.04);
         gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-        osc.stop(t0 + dur + 0.02);
+        osc.stop(t0 + dur + 0.03);
       });
     });
   }
