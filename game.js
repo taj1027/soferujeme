@@ -77,7 +77,7 @@ class MainScene extends Phaser.Scene {
 
     this.steer = 0;
     this.touch = { gas:false, gasId:null, reverse:false, reverseId:null };
-    this.wheel = { active:false, id:null, cx:92, cy:VIEW_H-92, r:72 };
+    this.wheel = { active:false, id:null, cx:92, cy:VIEW_H-92, r:72, lastPointerAngle:0 };
     this.wheelAngle = 0; // persistent wheel position
     this.wheelMaxAngle = 150;
     this.driveSpeed = 0;
@@ -93,6 +93,9 @@ class MainScene extends Phaser.Scene {
     this.engineGain = null;
     this.engineFilter = null;
     this.audioUnlocked = false;
+    this.preferMediaAudio = /iPad|iPhone|iPod|Android/i.test(navigator.userAgent || '');
+    this.mediaAudio = null;
+    this.hornCooldownUntil = 0;
     this.finished = false;
   }
 
@@ -138,6 +141,9 @@ class MainScene extends Phaser.Scene {
     this.revBtn = this.add.circle(VIEW_W-82, VIEW_H-170, 32, 0x0c1117, 0.34).setInteractive().setScrollFactor(0).setDepth(1000);
     this.revInner = this.add.circle(VIEW_W-82, VIEW_H-170, 22, 0xb7c0cb, 1).setScrollFactor(0).setDepth(1001);
     this.revTxt = this.add.text(VIEW_W-82, VIEW_H-170, 'R', { fontSize:'18px', color:'#142434', fontStyle:'bold' }).setOrigin(0.5).setScrollFactor(0).setDepth(1002);
+    this.hornBtn = this.add.circle(VIEW_W/2, VIEW_H-108, 28, 0x0c1117, 0.36).setInteractive().setScrollFactor(0).setDepth(1000);
+    this.hornInner = this.add.circle(VIEW_W/2, VIEW_H-108, 19, 0xffd04f, 1).setScrollFactor(0).setDepth(1001);
+    this.hornTxt = this.add.text(VIEW_W/2, VIEW_H-108, '📣', { fontSize:'18px' }).setOrigin(0.5).setScrollFactor(0).setDepth(1002);
 
     this.wheelBase = this.add.circle(this.wheel.cx, this.wheel.cy, this.wheel.r, 0x0c1117, 0.40).setScrollFactor(0).setDepth(1000);
     this.wheelRing = this.add.circle(this.wheel.cx, this.wheel.cy, this.wheel.r-10, 0xffffff, 0.08).setScrollFactor(0).setDepth(1001);
@@ -162,6 +168,13 @@ class MainScene extends Phaser.Scene {
       this.touch.reverseId = p.id;
       this.resumeCameraFollow();
       this.startEngineSound();
+    });
+    this.hornBtn.on('pointerdown', ()=> {
+      if (this.state !== 'playing') return;
+      this.unlockAudioOnGesture();
+      this.resumeAudio();
+      this.playHorn();
+      this.shakeAndRipple(180, 0.0035);
     });
     const releaseGas = (p)=>{
       if (!p || this.touch.gasId === null || p.id === this.touch.gasId){
@@ -197,6 +210,7 @@ class MainScene extends Phaser.Scene {
           this.ensureAudio();
           this.wheel.active = true;
           this.wheel.id = p.id;
+          this.wheel.lastPointerAngle = Phaser.Math.RadToDeg(Math.atan2(p.y - this.wheel.cy, p.x - this.wheel.cx)) + 90;
           this.resumeCameraFollow();
           this.updateWheelFromPointer(p);
           return;
@@ -298,7 +312,8 @@ class MainScene extends Phaser.Scene {
     const inWheel = Phaser.Math.Distance.Between(p.x, p.y, this.wheel.cx, this.wheel.cy) <= this.wheel.r + 20;
     const inGas = Phaser.Math.Distance.Between(p.x, p.y, VIEW_W-82, VIEW_H-84) <= 62;
     const inRev = Phaser.Math.Distance.Between(p.x, p.y, VIEW_W-82, VIEW_H-170) <= 42;
-    return inWheel || inGas || inRev;
+    const inHorn = Phaser.Math.Distance.Between(p.x, p.y, VIEW_W/2, VIEW_H-108) <= 36;
+    return inWheel || inGas || inRev || inHorn;
   }
 
   beginPinch(a, b){
@@ -342,10 +357,24 @@ class MainScene extends Phaser.Scene {
   }
 
   updateWheelFromPointer(p){
-    const dx = p.x - this.wheel.cx;
-    const usable = this.wheel.r * 0.78;
-    this.steer = clamp(dx / usable, -1, 1);
-    this.wheelAngle = this.steer * 115;
+    const raw = Phaser.Math.RadToDeg(Math.atan2(p.y - this.wheel.cy, p.x - this.wheel.cx)) + 90;
+    let target = raw;
+    while (target > 180) target -= 360;
+    while (target < -180) target += 360;
+    target = clamp(target, -115, 115);
+    const prev = this.wheelAngle;
+    const delta = clamp(target - prev, -14, 14);
+    this.wheelAngle = clamp(prev + delta, -115, 115);
+    this.steer = this.wheelAngle / 115;
+    if (this.state === 'playing' && this.car && Math.abs(delta) > 0.01){
+      const rotMul = (this.selectedCar?.id === 'motorka') ? 0.52 : 0.38;
+      this.car.rotation += Phaser.Math.DegToRad(delta * rotMul);
+      if (this.car.body){
+        this.car.body.setAngularVelocity(0);
+        if (!this.touch.gas && !this.touch.reverse) this.car.body.setVelocity(0,0);
+      }
+      if (!this.finished) this.resumeCameraFollow();
+    }
     this.renderWheelVisual();
   }
 
@@ -408,11 +437,11 @@ class MainScene extends Phaser.Scene {
 
     this.worldView = this.add.container(0,0);
     const worldImg = this.add.image(0,0,'atlas_world');
-    const europeHit = this.add.zone(-4,-56,70,54).setInteractive({ useHandCursor:true });
+    const europeHit = this.add.zone(12,-40,70,54).setInteractive({ useHandCursor:true });
     europeHit.on('pointerdown', ()=> { this.mapStage = 'europe'; this.refreshMenuVisuals(); });
-    const europeTag = this.add.text(-4,-90,'Európa',{ fontSize:'12px', color:'#fff7bf', fontStyle:'bold', backgroundColor:'#1b4d78', padding:{left:4,right:4,top:2,bottom:2} }).setOrigin(0.5);
+    const europeTag = this.add.text(12,-74,'Európa',{ fontSize:'12px', color:'#fff7bf', fontStyle:'bold', backgroundColor:'#1b4d78', padding:{left:4,right:4,top:2,bottom:2} }).setOrigin(0.5);
     const europeGlow = this.add.graphics();
-    europeGlow.lineStyle(2, 0xffef92, 1).strokeEllipse(-4,-56,64,46);
+    europeGlow.lineStyle(2, 0xffef92, 1).strokeEllipse(12,-40,64,46);
     const locks = [];
     [
       {x:-90,y:-18,t:'S. Amerika'}, {x:-56,y:34,t:'J. Amerika'}, {x:100,y:-42,t:'Ázia'}, {x:82,y:28,t:'Afrika'}, {x:118,y:58,t:'Austrália'}
@@ -423,8 +452,8 @@ class MainScene extends Phaser.Scene {
     this.europeView = this.add.container(0,0);
     const europeImg = this.add.image(0,0,'atlas_europe');
     const slGlow = this.add.graphics();
-    this.drawSloveniaOutline(slGlow, 26, 28, 0xfff0a0, 0xffd94d);
-    const slHit = this.add.zone(26, 28, 56, 30).setInteractive({ useHandCursor:true });
+    slGlow.lineStyle(3, 0xffef92, 1).strokeCircle(26, 28, 16);
+    const slHit = this.add.zone(26, 28, 42, 42).setInteractive({ useHandCursor:true });
     slHit.on('pointerdown', ()=> { this.unlockAudioOnGesture(); this.selectedMap = MAPS.si; this.refreshMenuVisuals(); this.startGame(); });
     const backTag = this.add.text(-92, -56, '', { fontSize:'1px', color:'#000000' }).setOrigin(0.5);
     const locked2 = [];
@@ -462,7 +491,7 @@ class MainScene extends Phaser.Scene {
     const playing = s === 'playing';
     this.menuRoot.setVisible(showMenu);
     this.mapPanel.setVisible(showMenu);
-    [this.wheelBase, this.wheelRing, this.wheelSpokes, this.wheelKnob, this.gasBtn, this.gasInner, this.gasTxt, this.revBtn, this.revInner, this.revTxt].forEach(o=>o.setVisible(playing));
+    [this.wheelBase, this.wheelRing, this.wheelSpokes, this.wheelKnob, this.gasBtn, this.gasInner, this.gasTxt, this.revBtn, this.revInner, this.revTxt, this.hornBtn, this.hornInner, this.hornTxt].forEach(o=>o.setVisible(playing));
     this.btnBackMenuBg.setVisible(playing);
     this.btnBackMenu.setVisible(playing);
     this.uiInfo.setText(showMenu ? 'Vyber auto a mapu, potom štart.' : `Mapa: ${this.selectedMap.name} • Auto: ${this.selectedCar.name}`);
@@ -600,6 +629,8 @@ class MainScene extends Phaser.Scene {
     this.best = Math.max(this.best, this.money);
     this.uiInfo.setText(`🏁 CÍL! Peníze: ${this.money} (best: ${this.best})`);
     this.playWinTune();
+    this.spawnFireworks();
+    this.shakeAndRipple(420, 0.006);
     this.driveSpeed = 0;
     if (this.car && this.car.body){ this.car.body.setVelocity(0,0); this.car.body.setAngularVelocity(0); }
     this.touch.gas = false; this.touch.gasId = null;
@@ -623,11 +654,8 @@ class MainScene extends Phaser.Scene {
       this.resumeCameraFollow();
     }
 
-    const turnRateDeg = driving ? 230 : 175;
-    const spinRateDeg = 125;
-    if (Math.abs(steer) > 0.02){
-      const yawDeg = steer * (driving ? turnRateDeg : spinRateDeg) * dt * (reverse ? -1 : 1);
-      this.car.rotation += Phaser.Math.DegToRad(yawDeg);
+    if (Math.abs(kbSteer) > 0.02){
+      this.car.rotation += Phaser.Math.DegToRad(kbSteer * 150 * dt * (reverse ? -1 : 1));
     }
 
     const accel = this.selectedCar.accel || 520;
@@ -656,47 +684,243 @@ class MainScene extends Phaser.Scene {
     return this.car.body.velocity.x * heading.x + this.car.body.velocity.y * heading.y;
   }
 
+  shakeAndRipple(duration=180, intensity=0.0035){
+    if (this.cameras?.main) this.cameras.main.shake(duration, intensity, true);
+    const g = this.add.graphics().setScrollFactor(0).setDepth(1500);
+    const cx = VIEW_W/2, cy = VIEW_H/2;
+    const ripple = { r: 20, a: 0.28 };
+    const draw = ()=>{
+      g.clear();
+      g.lineStyle(6, 0xffffff, ripple.a); g.strokeCircle(cx, cy, ripple.r);
+      g.lineStyle(3, 0x7fc8ff, ripple.a * 0.8); g.strokeCircle(cx, cy, ripple.r * 0.72);
+    };
+    draw();
+    this.tweens.add({ targets:ripple, r:Math.max(VIEW_W, VIEW_H)*0.8, a:0, duration, ease:'Cubic.easeOut', onUpdate:draw, onComplete:()=>g.destroy() });
+  }
+
+  playHorn(){
+    const now = this.time.now || 0;
+    if (now < this.hornCooldownUntil) return;
+    this.hornCooldownUntil = now + 220;
+    if (this.preferMediaAudio && this.mediaAudio?.horn){
+      try {
+        const a = this.mediaAudio.horn.cloneNode();
+        a.volume = 0.95;
+        a.play().catch(()=>{});
+      } catch(e){}
+      return;
+    }
+    if (!this.audioCtx) return;
+    this.resumeAudio();
+    const t = this.audioCtx.currentTime + 0.01;
+    [392, 330].forEach((f, i)=>{
+      const osc = this.audioCtx.createOscillator();
+      const gain = this.audioCtx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(f, t);
+      osc.connect(gain); gain.connect(this.audioCtx.destination);
+      const tt = t + i*0.03;
+      gain.gain.setValueAtTime(0.0001, tt);
+      gain.gain.exponentialRampToValueAtTime(0.09, tt + 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.0001, tt + 0.42);
+      osc.start(tt); osc.stop(tt + 0.45);
+    });
+  }
+
+  spawnFireworks(){
+    const x = this.finishFlag ? this.finishFlag.x : (this.car ? this.car.x : VIEW_W/2);
+    const y = this.finishFlag ? this.finishFlag.y - 12 : (this.car ? this.car.y - 40 : VIEW_H/2);
+    const colors = [0xff595e,0xffca3a,0x8ac926,0x1982c4,0xff99dd,0xffffff];
+    for (let burst=0; burst<3; burst++){
+      this.time.delayedCall(burst * 180, ()=>{
+        for (let i=0;i<22;i++){
+          const ang = (Math.PI*2*i)/22 + Math.random()*0.18;
+          const speed = 70 + Math.random()*110;
+          const dot = this.add.circle(x, y, 3 + Math.random()*2, colors[(i+burst)%colors.length], 1).setDepth(1400);
+          this.tweens.add({
+            targets: dot,
+            x: x + Math.cos(ang)*speed,
+            y: y + Math.sin(ang)*speed,
+            alpha: 0,
+            scale: 0.4,
+            duration: 800 + Math.random()*250,
+            ease:'Cubic.easeOut',
+            onComplete: ()=> dot.destroy()
+          });
+        }
+      });
+    }
+  }
 
   ensureAudio(){
-    if (this.audioReady) return;
-    const Ctx = window.AudioContext || window.webkitAudioContext;
-    if (!Ctx) return;
-    this.audioCtx = new Ctx({ latencyHint:'interactive' });
-    this.audioReady = true;
+    if (!this.audioReady) {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (Ctx) {
+        try { this.audioCtx = new Ctx({ latencyHint:'interactive' }); } catch(e) {}
+      }
+      this.audioReady = true;
+    }
+    if (!this.mediaAudio) this.prepareMediaAudio();
+  }
+
+  prepareMediaAudio(){
+    this.mediaAudio = {
+      taxi: this.makeAudioEl(this.makeEngineDataUri(72)),
+      auto: this.makeAudioEl(this.makeEngineDataUri(96)),
+      motorka: this.makeAudioEl(this.makeEngineDataUri(168)),
+      horn: this.makeAudioEl(this.makeHornDataUri()),
+      win: this.makeAudioEl(this.makeWinDataUri())
+    };
+    ['taxi','auto','motorka'].forEach(k=>{ this.mediaAudio[k].loop = true; this.mediaAudio[k].preload = 'auto'; });
+  }
+
+  makeAudioEl(src){
+    const a = new Audio(src);
+    a.preload = 'auto';
+    a.playsInline = true;
+    a.setAttribute('playsinline','');
+    a.crossOrigin = 'anonymous';
+    return a;
+  }
+
+  floatTo16BitPCM(view, offset, input){
+    for (let i = 0; i < input.length; i++, offset += 2) {
+      let s = Math.max(-1, Math.min(1, input[i]));
+      view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+    }
+  }
+
+  encodeWav(samples, sampleRate=22050){
+    const buffer = new ArrayBuffer(44 + samples.length * 2);
+    const view = new DataView(buffer);
+    const writeString = (off, str)=>{ for (let i=0;i<str.length;i++) view.setUint8(off+i, str.charCodeAt(i)); };
+    writeString(0, 'RIFF');
+    view.setUint32(4, 36 + samples.length * 2, true);
+    writeString(8, 'WAVE');
+    writeString(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    writeString(36, 'data');
+    view.setUint32(40, samples.length * 2, true);
+    this.floatTo16BitPCM(view, 44, samples);
+    let binary = '';
+    const bytes = new Uint8Array(buffer);
+    const chunk = 0x8000;
+    for (let i=0;i<bytes.length;i+=chunk) binary += String.fromCharCode.apply(null, bytes.subarray(i, i+chunk));
+    return 'data:audio/wav;base64,' + btoa(binary);
+  }
+
+  makeEngineDataUri(baseHz){
+    const sr = 22050, dur = 1.2, n = Math.floor(sr * dur), data = new Float32Array(n);
+    for (let i=0;i<n;i++){
+      const t = i / sr;
+      const f = baseHz * (1 + 0.06*Math.sin(2*Math.PI*3*t));
+      const s = Math.sin(2*Math.PI*f*t) * 0.58 + Math.sin(2*Math.PI*f*2*t) * 0.22 + Math.sin(2*Math.PI*f*3*t) * 0.12;
+      data[i] = Math.tanh(s * 0.9) * 0.45;
+    }
+    return this.encodeWav(data, sr);
+  }
+
+  makeHornDataUri(){
+    const sr = 22050, dur = 0.55, n = Math.floor(sr * dur), data = new Float32Array(n);
+    for (let i=0;i<n;i++){
+      const t = i / sr;
+      const env = Math.max(0, 1 - t / dur);
+      const s = Math.sin(2*Math.PI*392*t) * 0.5 + Math.sin(2*Math.PI*311*t) * 0.35;
+      data[i] = Math.tanh(s) * env * 0.7;
+    }
+    return this.encodeWav(data, sr);
+  }
+
+  makeWinDataUri(){
+    const sr = 22050, dur = 2.2, n = Math.floor(sr * dur), data = new Float32Array(n);
+    const notes = [523.25,659.25,783.99,1046.5,1318.5];
+    const times = [0,0.18,0.36,0.58,0.82,1.06,1.30,1.56];
+    for (let i=0;i<n;i++){
+      const t = i / sr;
+      let s = 0;
+      for (let k=0;k<times.length;k++){
+        const start = times[k], end = start + 0.16;
+        if (t >= start && t <= end){
+          const env = Math.sin(Math.PI * ((t-start)/(end-start)));
+          const f = notes[k % notes.length];
+          s += (Math.sin(2*Math.PI*f*t) * 0.65 + Math.sin(2*Math.PI*f*2*t) * 0.18) * env;
+        }
+      }
+      const burstStarts = [1.22,1.44,1.66,1.88];
+      burstStarts.forEach((bs, idx)=>{
+        const bd = 0.12;
+        if (t >= bs && t <= bs + bd){
+          const env = 1 - ((t-bs)/bd);
+          s += (Math.random()*2 - 1) * env * (0.18 + idx*0.02);
+        }
+      });
+      data[i] = Math.max(-1, Math.min(1, s * 0.42));
+    }
+    return this.encodeWav(data, sr);
+  }
+
+  tryUnlockMediaAudio(){
+    if (!this.mediaAudio) return;
+    Object.values(this.mediaAudio).forEach(a=>{
+      try {
+        a.muted = true;
+        a.currentTime = 0;
+        const p = a.play();
+        if (p && p.then) p.then(()=>{ a.pause(); a.currentTime = 0; a.muted = false; }).catch(()=>{ a.muted = false; });
+        else { a.pause(); a.currentTime = 0; a.muted = false; }
+      } catch(e){}
+    });
   }
 
   unlockAudioOnGesture(){
     this.ensureAudio();
+    this.tryUnlockMediaAudio();
     if (!this.audioCtx) return;
     try {
       if (this.audioCtx.state === 'suspended') this.audioCtx.resume();
       const t = this.audioCtx.currentTime;
       const osc = this.audioCtx.createOscillator();
       const gain = this.audioCtx.createGain();
-      const buffer = this.audioCtx.createBuffer(1, 1, this.audioCtx.sampleRate);
-      const src = this.audioCtx.createBufferSource();
-      src.buffer = buffer;
       osc.type = 'sine';
       osc.frequency.value = 220;
       gain.gain.value = 0.00001;
-      osc.connect(gain);
-      src.connect(gain);
-      gain.connect(this.audioCtx.destination);
-      osc.start(t);
-      src.start(t);
-      osc.stop(t + 0.03);
-      src.stop(t + 0.001);
+      osc.connect(gain); gain.connect(this.audioCtx.destination);
+      osc.start(t); osc.stop(t + 0.03);
       this.audioUnlocked = true;
     } catch(e) {}
   }
 
   resumeAudio(){
-    if (!this.audioCtx) return;
-    try { if (this.audioCtx.state === 'suspended') this.audioCtx.resume(); } catch(e) {}
+    if (this.audioCtx) {
+      try { if (this.audioCtx.state === 'suspended') this.audioCtx.resume(); } catch(e) {}
+    }
+  }
+
+  currentEngineAudio(){
+    if (!this.mediaAudio) return null;
+    const id = this.selectedCar?.id || 'auto';
+    return this.mediaAudio[id] || this.mediaAudio.auto;
   }
 
   startEngineSound(){
     this.unlockAudioOnGesture();
+    if (this.preferMediaAudio){
+      const a = this.currentEngineAudio();
+      if (!a) return;
+      if (this.activeEngineAudio && this.activeEngineAudio !== a){ try { this.activeEngineAudio.pause(); this.activeEngineAudio.currentTime = 0; } catch(e){} }
+      this.activeEngineAudio = a;
+      try {
+        a.loop = true;
+        a.volume = this.selectedCar?.engineGain || 0.06;
+        if (a.paused) a.play().catch(()=>{});
+      } catch(e){}
+    }
     if (!this.audioCtx) return;
     if (this.audioCtx.state === 'suspended') this.audioCtx.resume();
     if (this.engineOsc) return;
@@ -708,29 +932,38 @@ class MainScene extends Phaser.Scene {
     filter.frequency.value = 480;
     osc.frequency.value = this.selectedCar?.engineBase || 90;
     gain.gain.value = 0.0001;
-    osc.connect(filter);
-    filter.connect(gain);
-    gain.connect(this.audioCtx.destination);
+    osc.connect(filter); filter.connect(gain); gain.connect(this.audioCtx.destination);
     osc.start();
-    gain.gain.exponentialRampToValueAtTime(this.selectedCar?.engineGain || 0.045, this.audioCtx.currentTime + 0.05);
-    this.engineOsc = osc;
-    this.engineGain = gain;
-    this.engineFilter = filter;
+    gain.gain.exponentialRampToValueAtTime((this.selectedCar?.engineGain || 0.045) * (this.preferMediaAudio ? 0.1 : 1), this.audioCtx.currentTime + 0.05);
+    this.engineOsc = osc; this.engineGain = gain; this.engineFilter = filter;
   }
 
   updateEngineSound(speed, gas){
+    const s = clamp((speed || 0) / (this.selectedCar?.maxSpeed || 240), 0, 1);
+    if (this.preferMediaAudio){
+      const a = this.currentEngineAudio();
+      if (a){
+        try {
+          a.playbackRate = (this.selectedCar?.id === 'motorka' ? 1.4 : 0.85) + s * (this.selectedCar?.id === 'motorka' ? 1.3 : 0.55);
+          a.volume = gas ? (this.selectedCar?.engineGain || 0.06) * 1.1 : (this.selectedCar?.engineGain || 0.06) * 0.72;
+        } catch(e){}
+      }
+    }
     if (!this.engineOsc || !this.audioCtx) return;
     const t = this.audioCtx.currentTime;
-    const s = clamp((speed || 0) / (this.selectedCar?.maxSpeed || 240), 0, 1);
     const base = this.selectedCar?.engineBase || 90;
     const top = this.selectedCar?.engineTop || 210;
-    const gainAmt = this.selectedCar?.engineGain || 0.045;
+    const gainAmt = (this.selectedCar?.engineGain || 0.045) * (this.preferMediaAudio ? 0.1 : 1);
     this.engineOsc.frequency.setTargetAtTime(base + s * (top - base) + (gas ? 16 : 8), t, 0.04);
     if (this.engineFilter) this.engineFilter.frequency.setTargetAtTime(320 + s * 1000, t, 0.07);
     if (this.engineGain) this.engineGain.gain.setTargetAtTime(gas ? gainAmt : gainAmt * 0.65, t, 0.05);
   }
 
   stopEngineSound(){
+    if (this.activeEngineAudio){
+      try { this.activeEngineAudio.pause(); this.activeEngineAudio.currentTime = 0; } catch(e) {}
+      this.activeEngineAudio = null;
+    }
     if (!this.engineOsc || !this.audioCtx) return;
     const osc = this.engineOsc, gain = this.engineGain, t = this.audioCtx.currentTime;
     this.engineOsc = null; this.engineGain = null; this.engineFilter = null;
@@ -743,17 +976,22 @@ class MainScene extends Phaser.Scene {
   }
 
   playWinTune(){
+    if (this.preferMediaAudio && this.mediaAudio?.win){
+      try {
+        const a = this.mediaAudio.win.cloneNode();
+        a.volume = 0.95;
+        a.play().catch(()=>{});
+      } catch(e){}
+    }
     if (!this.audioCtx) return;
     this.resumeAudio();
     const start = this.audioCtx.currentTime + 0.02;
     const melody = [
-      [523.25,0.00,0.24,'triangle',0.07],
-      [659.25,0.24,0.24,'triangle',0.07],
-      [783.99,0.48,0.30,'triangle',0.07],
-      [659.25,0.80,0.20,'square',0.05],
-      [783.99,1.02,0.20,'square',0.05],
-      [1046.5,1.24,0.42,'triangle',0.075],
-      [1318.5,1.70,0.56,'sine',0.085]
+      [523.25,0.00,0.16,'triangle',0.07],
+      [659.25,0.16,0.16,'triangle',0.07],
+      [783.99,0.32,0.18,'triangle',0.07],
+      [1046.5,0.52,0.20,'triangle',0.075],
+      [1318.5,0.74,0.26,'sine',0.082]
     ];
     melody.forEach(([freq,off,dur,wave,peak])=>{
       const osc = this.audioCtx.createOscillator();
@@ -764,32 +1002,25 @@ class MainScene extends Phaser.Scene {
       gain.gain.value = 0.0001;
       const t0 = start + off;
       osc.start(t0);
-      gain.gain.exponentialRampToValueAtTime(peak, t0 + 0.04);
-      gain.gain.setTargetAtTime(peak * 0.45, t0 + dur * 0.45, 0.08);
+      gain.gain.exponentialRampToValueAtTime(peak, t0 + 0.03);
+      gain.gain.setTargetAtTime(peak * 0.45, t0 + dur * 0.42, 0.06);
       gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-      osc.stop(t0 + dur + 0.04);
+      osc.stop(t0 + dur + 0.03);
     });
-    const popTimes = [0.96,1.08,1.20,1.34,1.48,1.62,1.88,1.98,2.08,2.20];
-    popTimes.forEach((off,i)=>{
+    [0.98,1.10,1.22,1.34].forEach((off,i)=>{
       const buffer = this.audioCtx.createBuffer(1, Math.floor(this.audioCtx.sampleRate * 0.09), this.audioCtx.sampleRate);
       const data = buffer.getChannelData(0);
-      for (let n=0; n<data.length; n++){
-        const env = 1 - n / data.length;
-        data[n] = (Math.random()*2 - 1) * env * (0.35 + (i%3)*0.08);
-      }
+      for (let n=0; n<data.length; n++) data[n] = (Math.random()*2 - 1) * (1 - n/data.length) * (0.28 + i*0.04);
       const src = this.audioCtx.createBufferSource();
       const filter = this.audioCtx.createBiquadFilter();
       const gain = this.audioCtx.createGain();
-      src.buffer = buffer;
-      filter.type = 'bandpass';
-      filter.frequency.value = 1400 + (i%4)*350;
-      gain.gain.value = 0.0001;
+      src.buffer = buffer; filter.type = 'bandpass'; filter.frequency.value = 1200 + i*260;
       src.connect(filter); filter.connect(gain); gain.connect(this.audioCtx.destination);
       const t0 = start + off;
-      src.start(t0);
-      gain.gain.exponentialRampToValueAtTime(0.02, t0 + 0.01);
+      gain.gain.setValueAtTime(0.0001, t0);
+      gain.gain.exponentialRampToValueAtTime(0.03, t0 + 0.01);
       gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.09);
-      src.stop(t0 + 0.10);
+      src.start(t0); src.stop(t0 + 0.10);
     });
   }
 
