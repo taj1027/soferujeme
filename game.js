@@ -1,5 +1,5 @@
 
-// Šoférujeme 4 — Phaser 3
+// Tadi Autá 4 — Phaser 3
 // Based only on the last working branch (v14), with fixes for:
 // - continent selection before country selection
 // - persistent steering wheel that does not spring back
@@ -76,10 +76,10 @@ class MainScene extends Phaser.Scene {
     this.mapStage = 'continents';
 
     this.steer = 0;
-    this.touch = { gas:false, gasId:null, reverse:false, reverseId:null };
+    this.touch = { gas:false, gasId:null, reverse:false, reverseId:null, horn:false, hornId:null };
     this.wheel = { active:false, id:null, cx:92, cy:VIEW_H-92, r:72, lastPointerAngle:0 };
     this.wheelAngle = 0; // persistent wheel position
-    this.wheelMaxAngle = 150;
+    this.wheelMaxAngle = 165;
     this.driveSpeed = 0;
 
     this.dragPan = { active:false, id:null, startX:0, startY:0, camX:0, camY:0 };
@@ -93,14 +93,15 @@ class MainScene extends Phaser.Scene {
     this.engineGain = null;
     this.engineFilter = null;
     this.audioUnlocked = false;
-    this.preferMediaAudio = /iPad|iPhone|iPod|Android/i.test(navigator.userAgent || '');
+    this.preferMediaAudio = false;
     this.mediaAudio = null;
     this.hornCooldownUntil = 0;
     this.finished = false;
+    this.hornLoop = null;
   }
 
   create(){
-    document.title = 'Šoférujeme 4';
+    document.title = 'Tadi Autá 4';
     this.input.addPointer(5);
 
     this.makeCarTexture('car_taxi', 60, 92, 0xffd800, 0x111111, false);
@@ -124,7 +125,7 @@ class MainScene extends Phaser.Scene {
   }
 
   buildTopUi(){
-    this.uiTitle = this.add.text(VIEW_W/2, 18, 'Šoférujeme 4', { fontSize:'18px', fontStyle:'bold', color:COLORS.text }).setOrigin(0.5).setScrollFactor(0).setDepth(900);
+    this.uiTitle = this.add.text(VIEW_W/2, 18, 'Tadi Autá 4', { fontSize:'18px', fontStyle:'bold', color:COLORS.text }).setOrigin(0.5).setScrollFactor(0).setDepth(900);
     this.uiMoney = this.add.text(12, 46, 'Peníze: 0', { fontSize:'16px', color:COLORS.text }).setScrollFactor(0).setDepth(900);
     this.uiInfo = this.add.text(12, 68, '', { fontSize:'13px', color:'#d0e7ff' }).setScrollFactor(0).setDepth(900);
     this.btnBackMenuBg = this.add.rectangle(VIEW_W-52, 52, 84, 30, 0x15334f, 1).setStrokeStyle(2, 0x86C0FF, 0.95).setInteractive({ useHandCursor:true }).setScrollFactor(0).setDepth(902);
@@ -137,10 +138,10 @@ class MainScene extends Phaser.Scene {
   buildControls(){
     this.gasBtn = this.add.circle(VIEW_W-82, VIEW_H-84, 54, 0x0c1117, 0.38).setInteractive().setScrollFactor(0).setDepth(1000);
     this.gasInner = this.add.circle(VIEW_W-82, VIEW_H-84, 38, 0x39d84d, 1).setScrollFactor(0).setDepth(1001);
-    this.gasTxt = this.add.text(VIEW_W-82, VIEW_H-84, '⛽', { fontSize:'28px', color:'#08250d' }).setOrigin(0.5).setScrollFactor(0).setDepth(1002);
+    this.gasTxt = this.add.text(VIEW_W-82, VIEW_H-84, '↑', { fontSize:'28px', color:'#08250d' }).setOrigin(0.5).setScrollFactor(0).setDepth(1002);
     this.revBtn = this.add.circle(VIEW_W-82, VIEW_H-170, 32, 0x0c1117, 0.34).setInteractive().setScrollFactor(0).setDepth(1000);
     this.revInner = this.add.circle(VIEW_W-82, VIEW_H-170, 22, 0xb7c0cb, 1).setScrollFactor(0).setDepth(1001);
-    this.revTxt = this.add.text(VIEW_W-82, VIEW_H-170, 'R', { fontSize:'18px', color:'#142434', fontStyle:'bold' }).setOrigin(0.5).setScrollFactor(0).setDepth(1002);
+    this.revTxt = this.add.text(VIEW_W-82, VIEW_H-170, '↓', { fontSize:'18px', color:'#142434', fontStyle:'bold' }).setOrigin(0.5).setScrollFactor(0).setDepth(1002);
     this.hornBtn = this.add.circle(VIEW_W/2, VIEW_H-108, 28, 0x0c1117, 0.36).setInteractive().setScrollFactor(0).setDepth(1000);
     this.hornInner = this.add.circle(VIEW_W/2, VIEW_H-108, 19, 0xffd04f, 1).setScrollFactor(0).setDepth(1001);
     this.hornTxt = this.add.text(VIEW_W/2, VIEW_H-108, '📣', { fontSize:'18px' }).setOrigin(0.5).setScrollFactor(0).setDepth(1002);
@@ -169,12 +170,14 @@ class MainScene extends Phaser.Scene {
       this.resumeCameraFollow();
       this.startEngineSound();
     });
-    this.hornBtn.on('pointerdown', ()=> {
+    this.hornBtn.on('pointerdown', (p)=> {
       if (this.state !== 'playing') return;
       this.unlockAudioOnGesture();
       this.resumeAudio();
-      this.playHorn();
-      this.shakeAndRipple(180, 0.0035);
+      this.touch.horn = true;
+      this.touch.hornId = p.id;
+      this.playHorn(true);
+      this.startHornLoop();
     });
     const releaseGas = (p)=>{
       if (!p || this.touch.gasId === null || p.id === this.touch.gasId){
@@ -190,10 +193,19 @@ class MainScene extends Phaser.Scene {
       }
       if (!this.touch.gas && !this.touch.reverse) this.stopEngineSound();
     };
+    const releaseHorn = (p)=>{
+      if (!p || this.touch.hornId === null || p.id === this.touch.hornId){
+        this.touch.horn = false;
+        this.touch.hornId = null;
+        this.stopHornLoop();
+      }
+    };
     this.gasBtn.on('pointerup', releaseGas);
     this.gasBtn.on('pointerout', releaseGas);
     this.revBtn.on('pointerup', releaseReverse);
     this.revBtn.on('pointerout', releaseReverse);
+    this.hornBtn.on('pointerup', releaseHorn);
+    this.hornBtn.on('pointerout', releaseHorn);
   }
 
   installInputHandlers(){
@@ -304,6 +316,11 @@ class MainScene extends Phaser.Scene {
         this.touch.reverseId = null;
       }
       if (!this.touch.gas && !this.touch.reverse) this.stopEngineSound();
+      if (!p || this.touch.hornId === null || p.id === this.touch.hornId){
+        this.touch.horn = false;
+        this.touch.hornId = null;
+        this.stopHornLoop();
+      }
     });
   }
 
@@ -357,18 +374,12 @@ class MainScene extends Phaser.Scene {
   }
 
   updateWheelFromPointer(p){
-    const raw = Phaser.Math.RadToDeg(Math.atan2(p.y - this.wheel.cy, p.x - this.wheel.cx)) + 90;
-    let target = raw;
-    while (target > 180) target -= 360;
-    while (target < -180) target += 360;
-    target = clamp(target, -115, 115);
-    const prev = this.wheelAngle;
-    const delta = clamp(target - prev, -14, 14);
-    this.wheelAngle = clamp(prev + delta, -115, 115);
-    this.steer = this.wheelAngle / 115;
-    if (this.state === 'playing' && this.car && Math.abs(delta) > 0.01){
-      const rotMul = (this.selectedCar?.id === 'motorka') ? 0.52 : 0.38;
-      this.car.rotation += Phaser.Math.DegToRad(delta * rotMul);
+    const dx = clamp(p.x - this.wheel.cx, -this.wheel.r, this.wheel.r);
+    const norm = dx / this.wheel.r;
+    this.wheelAngle = clamp(norm * this.wheelMaxAngle, -this.wheelMaxAngle, this.wheelMaxAngle);
+    this.steer = this.wheelAngle / this.wheelMaxAngle;
+    if (this.state === 'playing' && this.car){
+      this.car.rotation = Phaser.Math.DegToRad(this.wheelAngle);
       if (this.car.body){
         this.car.body.setAngularVelocity(0);
         if (!this.touch.gas && !this.touch.reverse) this.car.body.setVelocity(0,0);
@@ -437,11 +448,11 @@ class MainScene extends Phaser.Scene {
 
     this.worldView = this.add.container(0,0);
     const worldImg = this.add.image(0,0,'atlas_world');
-    const europeHit = this.add.zone(12,-40,70,54).setInteractive({ useHandCursor:true });
+    const europeHit = this.add.zone(0,-28,70,54).setInteractive({ useHandCursor:true });
     europeHit.on('pointerdown', ()=> { this.mapStage = 'europe'; this.refreshMenuVisuals(); });
-    const europeTag = this.add.text(12,-74,'Európa',{ fontSize:'12px', color:'#fff7bf', fontStyle:'bold', backgroundColor:'#1b4d78', padding:{left:4,right:4,top:2,bottom:2} }).setOrigin(0.5);
+    const europeTag = this.add.text(0,-60,'Európa',{ fontSize:'12px', color:'#fff7bf', fontStyle:'bold', backgroundColor:'#1b4d78', padding:{left:4,right:4,top:2,bottom:2} }).setOrigin(0.5);
     const europeGlow = this.add.graphics();
-    europeGlow.lineStyle(2, 0xffef92, 1).strokeEllipse(12,-40,64,46);
+    europeGlow.lineStyle(2, 0xffef92, 1).strokeEllipse(0,-28,64,46);
     const locks = [];
     [
       {x:-90,y:-18,t:'S. Amerika'}, {x:-56,y:34,t:'J. Amerika'}, {x:100,y:-42,t:'Ázia'}, {x:82,y:28,t:'Afrika'}, {x:118,y:58,t:'Austrália'}
@@ -552,7 +563,7 @@ class MainScene extends Phaser.Scene {
     const finishCell = this.chooseFinishCell(grid, startCell);
     const sx = startCell.x*CELL + CELL/2, sy = startCell.y*CELL + CELL/2, fx = finishCell.x*CELL + CELL/2, fy = finishCell.y*CELL + CELL/2;
     this.landLayer.add(this.add.rectangle(sx, sy, CELL*0.90, 8, 0xffffff, 1));
-    this.finishFlag = this.add.image(fx, fy-8, 'tex_flag').setScale(0.72); this.landLayer.add(this.finishFlag);
+    this.finishFlag = this.add.image(fx, fy-8, this.getFlagTextureKey()).setScale(0.72); this.landLayer.add(this.finishFlag);
     this.finishZone = this.add.zone(fx, fy, CELL*0.9, CELL*0.9); this.physics.add.existing(this.finishZone, true);
 
     const baseW = 34, baseH = 54, wMul = this.selectedCar.widthMul || 1, hMul = this.selectedCar.heightMul || 1;
@@ -582,8 +593,11 @@ class MainScene extends Phaser.Scene {
       this.ensureAudio();
       this.touch.gas = false; this.touch.gasId = null;
       this.touch.reverse = false; this.touch.reverseId = null;
+      this.touch.horn = false; this.touch.hornId = null;
+      this.stopHornLoop();
       this.stopEngineSound();
       this.finished = false;
+    this.hornLoop = null;
       this.driveSpeed = 0;
       this.buildWorld(this.selectedMap);
       this.setState('playing');
@@ -595,6 +609,9 @@ class MainScene extends Phaser.Scene {
     this.touch.gasId = null;
     this.touch.reverse = false;
     this.touch.reverseId = null;
+    this.touch.horn = false;
+    this.touch.hornId = null;
+    this.stopHornLoop();
     this.wheel.active = false;
     this.wheel.id = null;
     this.dragPan.active = false;
@@ -635,6 +652,8 @@ class MainScene extends Phaser.Scene {
     if (this.car && this.car.body){ this.car.body.setVelocity(0,0); this.car.body.setAngularVelocity(0); }
     this.touch.gas = false; this.touch.gasId = null;
     this.touch.reverse = false; this.touch.reverseId = null;
+    this.touch.horn = false; this.touch.hornId = null;
+    this.stopHornLoop();
     this.stopEngineSound();
   }
 
@@ -684,6 +703,25 @@ class MainScene extends Phaser.Scene {
     return this.car.body.velocity.x * heading.x + this.car.body.velocity.y * heading.y;
   }
 
+  startHornLoop(){
+    this.stopHornLoop();
+    this.playHorn(true);
+    this.shakeAndRipple(120, 0.0028);
+    this.hornLoop = this.time.addEvent({
+      delay: 180,
+      loop: true,
+      callback: ()=>{
+        if (!this.touch.horn) { this.stopHornLoop(); return; }
+        this.playHorn(true);
+        this.shakeAndRipple(120, 0.0028);
+      }
+    });
+  }
+
+  stopHornLoop(){
+    if (this.hornLoop){ this.hornLoop.remove(false); this.hornLoop = null; }
+  }
+
   shakeAndRipple(duration=180, intensity=0.0035){
     if (this.cameras?.main) this.cameras.main.shake(duration, intensity, true);
     const g = this.add.graphics().setScrollFactor(0).setDepth(1500);
@@ -698,11 +736,11 @@ class MainScene extends Phaser.Scene {
     this.tweens.add({ targets:ripple, r:Math.max(VIEW_W, VIEW_H)*0.8, a:0, duration, ease:'Cubic.easeOut', onUpdate:draw, onComplete:()=>g.destroy() });
   }
 
-  playHorn(){
+  playHorn(looping=false){
     const now = this.time.now || 0;
-    if (now < this.hornCooldownUntil) return;
-    this.hornCooldownUntil = now + 220;
-    if (this.preferMediaAudio && this.mediaAudio?.horn){
+    if (!looping && now < this.hornCooldownUntil) return;
+    if (!looping) this.hornCooldownUntil = now + 220;
+    if (!this.audioCtx && this.preferMediaAudio && this.mediaAudio?.horn){
       try {
         const a = this.mediaAudio.horn.cloneNode();
         a.volume = 0.95;
@@ -758,6 +796,7 @@ class MainScene extends Phaser.Scene {
       if (Ctx) {
         try { this.audioCtx = new Ctx({ latencyHint:'interactive' }); } catch(e) {}
       }
+      if (!this.audioCtx) this.preferMediaAudio = true;
       this.audioReady = true;
     }
     if (!this.mediaAudio) this.prepareMediaAudio();
@@ -910,7 +949,7 @@ class MainScene extends Phaser.Scene {
 
   startEngineSound(){
     this.unlockAudioOnGesture();
-    if (this.preferMediaAudio){
+    if (!this.audioCtx && this.preferMediaAudio){
       const a = this.currentEngineAudio();
       if (!a) return;
       if (this.activeEngineAudio && this.activeEngineAudio !== a){ try { this.activeEngineAudio.pause(); this.activeEngineAudio.currentTime = 0; } catch(e){} }
@@ -934,13 +973,13 @@ class MainScene extends Phaser.Scene {
     gain.gain.value = 0.0001;
     osc.connect(filter); filter.connect(gain); gain.connect(this.audioCtx.destination);
     osc.start();
-    gain.gain.exponentialRampToValueAtTime((this.selectedCar?.engineGain || 0.045) * (this.preferMediaAudio ? 0.1 : 1), this.audioCtx.currentTime + 0.05);
+    gain.gain.exponentialRampToValueAtTime((this.selectedCar?.engineGain || 0.045), this.audioCtx.currentTime + 0.015);
     this.engineOsc = osc; this.engineGain = gain; this.engineFilter = filter;
   }
 
   updateEngineSound(speed, gas){
     const s = clamp((speed || 0) / (this.selectedCar?.maxSpeed || 240), 0, 1);
-    if (this.preferMediaAudio){
+    if (!this.audioCtx && this.preferMediaAudio){
       const a = this.currentEngineAudio();
       if (a){
         try {
@@ -954,9 +993,9 @@ class MainScene extends Phaser.Scene {
     const base = this.selectedCar?.engineBase || 90;
     const top = this.selectedCar?.engineTop || 210;
     const gainAmt = (this.selectedCar?.engineGain || 0.045) * (this.preferMediaAudio ? 0.1 : 1);
-    this.engineOsc.frequency.setTargetAtTime(base + s * (top - base) + (gas ? 16 : 8), t, 0.04);
-    if (this.engineFilter) this.engineFilter.frequency.setTargetAtTime(320 + s * 1000, t, 0.07);
-    if (this.engineGain) this.engineGain.gain.setTargetAtTime(gas ? gainAmt : gainAmt * 0.65, t, 0.05);
+    this.engineOsc.frequency.setTargetAtTime(base + s * (top - base) + (gas ? 18 : 8), t, 0.015);
+    if (this.engineFilter) this.engineFilter.frequency.setTargetAtTime(320 + s * 1000, t, 0.02);
+    if (this.engineGain) this.engineGain.gain.setTargetAtTime(gas ? gainAmt : gainAmt * 0.65, t, 0.02);
   }
 
   stopEngineSound(){
@@ -976,51 +1015,37 @@ class MainScene extends Phaser.Scene {
   }
 
   playWinTune(){
-    if (this.preferMediaAudio && this.mediaAudio?.win){
-      try {
-        const a = this.mediaAudio.win.cloneNode();
-        a.volume = 0.95;
-        a.play().catch(()=>{});
-      } catch(e){}
+    if (!this.audioCtx && this.preferMediaAudio && this.mediaAudio?.win){
+      [0, 520, 1040].forEach((d)=>{
+        this.time.delayedCall(d, ()=>{ try { const a = this.mediaAudio.win.cloneNode(); a.volume = 0.95; a.play().catch(()=>{}); } catch(e){} });
+      });
+      return;
     }
     if (!this.audioCtx) return;
     this.resumeAudio();
-    const start = this.audioCtx.currentTime + 0.02;
-    const melody = [
-      [523.25,0.00,0.16,'triangle',0.07],
-      [659.25,0.16,0.16,'triangle',0.07],
-      [783.99,0.32,0.18,'triangle',0.07],
-      [1046.5,0.52,0.20,'triangle',0.075],
-      [1318.5,0.74,0.26,'sine',0.082]
-    ];
-    melody.forEach(([freq,off,dur,wave,peak])=>{
-      const osc = this.audioCtx.createOscillator();
-      const gain = this.audioCtx.createGain();
-      osc.type = wave;
-      osc.frequency.setValueAtTime(freq, start + off);
-      osc.connect(gain); gain.connect(this.audioCtx.destination);
-      gain.gain.value = 0.0001;
-      const t0 = start + off;
-      osc.start(t0);
-      gain.gain.exponentialRampToValueAtTime(peak, t0 + 0.03);
-      gain.gain.setTargetAtTime(peak * 0.45, t0 + dur * 0.42, 0.06);
-      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-      osc.stop(t0 + dur + 0.03);
-    });
-    [0.98,1.10,1.22,1.34].forEach((off,i)=>{
-      const buffer = this.audioCtx.createBuffer(1, Math.floor(this.audioCtx.sampleRate * 0.09), this.audioCtx.sampleRate);
-      const data = buffer.getChannelData(0);
-      for (let n=0; n<data.length; n++) data[n] = (Math.random()*2 - 1) * (1 - n/data.length) * (0.28 + i*0.04);
-      const src = this.audioCtx.createBufferSource();
-      const filter = this.audioCtx.createBiquadFilter();
-      const gain = this.audioCtx.createGain();
-      src.buffer = buffer; filter.type = 'bandpass'; filter.frequency.value = 1200 + i*260;
-      src.connect(filter); filter.connect(gain); gain.connect(this.audioCtx.destination);
-      const t0 = start + off;
-      gain.gain.setValueAtTime(0.0001, t0);
-      gain.gain.exponentialRampToValueAtTime(0.03, t0 + 0.01);
-      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.09);
-      src.start(t0); src.stop(t0 + 0.10);
+    [0, 0.62, 1.24].forEach((rep)=>{
+      const start = this.audioCtx.currentTime + 0.02 + rep;
+      const melody = [
+        [523.25,0.00,0.10,'triangle',0.07],
+        [659.25,0.10,0.10,'triangle',0.07],
+        [783.99,0.20,0.12,'triangle',0.07],
+        [1046.5,0.34,0.14,'triangle',0.075],
+        [1318.5,0.50,0.18,'sine',0.082]
+      ];
+      melody.forEach(([freq,off,dur,wave,peak])=>{
+        const osc = this.audioCtx.createOscillator();
+        const gain = this.audioCtx.createGain();
+        osc.type = wave;
+        osc.frequency.setValueAtTime(freq, start + off);
+        osc.connect(gain); gain.connect(this.audioCtx.destination);
+        gain.gain.value = 0.0001;
+        const t0 = start + off;
+        osc.start(t0);
+        gain.gain.exponentialRampToValueAtTime(peak, t0 + 0.02);
+        gain.gain.setTargetAtTime(peak * 0.4, t0 + dur * 0.35, 0.04);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+        osc.stop(t0 + dur + 0.03);
+      });
     });
   }
 
@@ -1037,7 +1062,7 @@ class MainScene extends Phaser.Scene {
     } else {
       g.fillStyle(0x111111, 1).fillCircle(w * 0.23, h * 0.2, 8).fillCircle(w * 0.77, h * 0.2, 8).fillCircle(w * 0.23, h * 0.8, 8).fillCircle(w * 0.77, h * 0.8, 8);
       g.fillStyle(bodyColor, 1).fillRoundedRect(w * 0.18, h * 0.08, w * 0.64, h * 0.84, 16);
-      g.fillStyle(0x7fc8ff, 0.92).fillRoundedRect(w * 0.28, h * 0.54, w * 0.44, h * 0.16, 8);
+      g.fillStyle(0x7fc8ff, 0.92).fillRoundedRect(w * 0.28, h * 0.60, w * 0.44, h * 0.14, 8);
       g.fillStyle(stripeColor, 0.95).fillRect(w * 0.43, h * 0.14, w * 0.14, h * 0.64);
       g.fillStyle(0xff3333, 0.9).fillRect(w * 0.25, h * 0.76, 8, 8).fillRect(w * 0.67, h * 0.76, 8, 8);
     }
@@ -1083,14 +1108,24 @@ class MainScene extends Phaser.Scene {
     g.generateTexture(key, w, h); g.destroy();
   }
 
+  getFlagTextureKey(){
+    return this.selectedMap?.id === 'si' ? 'tex_flag_si' : 'tex_flag_si';
+  }
+
   makeFlagTexture(){
-    if (this.textures.exists('tex_flag')) return;
+    if (this.textures.exists('tex_flag_si')) return;
     const g = this.add.graphics();
     g.lineStyle(3, 0xffffff, 1); g.lineBetween(8, 34, 8, 4);
     g.fillStyle(0xffffff,1).fillRoundedRect(10, 6, 22, 15, 4);
     g.fillStyle(0x3a87ff,1).fillRect(10, 6, 22, 5);
     g.fillStyle(0xff5959,1).fillRect(10, 16, 22, 5);
-    g.generateTexture('tex_flag', 40, 40); g.destroy();
+    g.clear();
+    g.lineStyle(3, 0xffffff, 1); g.lineBetween(8, 34, 8, 4);
+    g.fillStyle(0xffffff,1).fillRoundedRect(10, 6, 22, 15, 4);
+    g.fillStyle(0xffffff,1).fillRect(10, 6, 22, 5);
+    g.fillStyle(0x3a87ff,1).fillRect(10, 11, 22, 5);
+    g.fillStyle(0xff5959,1).fillRect(10, 16, 22, 5);
+    g.generateTexture('tex_flag_si', 40, 40); g.destroy();
   }
 }
 
