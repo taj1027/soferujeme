@@ -26,9 +26,9 @@ const COLORS = {
 };
 
 const CARS = [
-  { id:'taxi',    name:'Taxi',    color:0xffd800, maxSpeed:230, accel:520, widthMul:1.0, heightMul:1.0, engineBase:72, engineTop:165, engineGain:0.055 },
-  { id:'motorka', name:'Motorka', color:0xff69b4, maxSpeed:280, accel:560, widthMul:0.55, heightMul:0.85, engineBase:118, engineTop:260, engineGain:0.04 },
-  { id:'auto',    name:'Auto',    color:0xffffff, maxSpeed:240, accel:520, widthMul:1.0, heightMul:1.0, engineBase:92, engineTop:205, engineGain:0.048 },
+  { id:'taxi',    name:'Taxi',    color:0xffd800, maxSpeed:115, accel:320, widthMul:1.0, heightMul:1.0, engineBase:64, engineTop:132, engineGain:0.055 },
+  { id:'motorka', name:'Motorka', color:0xff69b4, maxSpeed:1120, accel:1800, widthMul:0.55, heightMul:0.85, engineBase:138, engineTop:520, engineGain:0.035 },
+  { id:'auto',    name:'Auto',    color:0xffffff, maxSpeed:120, accel:330, widthMul:1.0, heightMul:1.0, engineBase:84, engineTop:160, engineGain:0.048 },
 ];
 
 const MAPS = {
@@ -80,6 +80,7 @@ class MainScene extends Phaser.Scene {
     this.wheel = { active:false, id:null, cx:92, cy:VIEW_H-92, r:72 };
     this.wheelAngle = 0; // persistent wheel position
     this.wheelMaxAngle = 150;
+    this.driveSpeed = 0;
 
     this.dragPan = { active:false, id:null, startX:0, startY:0, camX:0, camY:0 };
     this.pinch = { active:false, ids:[], startDist:0, startZoom:1 };
@@ -184,6 +185,7 @@ class MainScene extends Phaser.Scene {
 
   installInputHandlers(){
     this.cursors = this.input.keyboard.createCursorKeys();
+    this.input.on('pointerdown', ()=>{ this.unlockAudioOnGesture(); this.resumeAudio(); });
 
     this.input.on('pointerdown', (p)=>{
       this.unlockAudioOnGesture();
@@ -406,11 +408,11 @@ class MainScene extends Phaser.Scene {
 
     this.worldView = this.add.container(0,0);
     const worldImg = this.add.image(0,0,'atlas_world');
-    const europeHit = this.add.zone(12,-40,70,54).setInteractive({ useHandCursor:true });
+    const europeHit = this.add.zone(-4,-56,70,54).setInteractive({ useHandCursor:true });
     europeHit.on('pointerdown', ()=> { this.mapStage = 'europe'; this.refreshMenuVisuals(); });
-    const europeTag = this.add.text(12,-74,'Európa',{ fontSize:'12px', color:'#fff7bf', fontStyle:'bold', backgroundColor:'#1b4d78', padding:{left:4,right:4,top:2,bottom:2} }).setOrigin(0.5);
+    const europeTag = this.add.text(-4,-90,'Európa',{ fontSize:'12px', color:'#fff7bf', fontStyle:'bold', backgroundColor:'#1b4d78', padding:{left:4,right:4,top:2,bottom:2} }).setOrigin(0.5);
     const europeGlow = this.add.graphics();
-    europeGlow.lineStyle(2, 0xffef92, 1).strokeEllipse(12,-40,64,46);
+    europeGlow.lineStyle(2, 0xffef92, 1).strokeEllipse(-4,-56,64,46);
     const locks = [];
     [
       {x:-90,y:-18,t:'S. Amerika'}, {x:-56,y:34,t:'J. Amerika'}, {x:100,y:-42,t:'Ázia'}, {x:82,y:28,t:'Afrika'}, {x:118,y:58,t:'Austrália'}
@@ -421,8 +423,8 @@ class MainScene extends Phaser.Scene {
     this.europeView = this.add.container(0,0);
     const europeImg = this.add.image(0,0,'atlas_europe');
     const slGlow = this.add.graphics();
-    this.drawSloveniaOutline(slGlow, 22, 25, 0xfff0a0, 0xffd94d);
-    const slHit = this.add.zone(23, 25, 54, 28).setInteractive({ useHandCursor:true });
+    this.drawSloveniaOutline(slGlow, 26, 28, 0xfff0a0, 0xffd94d);
+    const slHit = this.add.zone(26, 28, 56, 30).setInteractive({ useHandCursor:true });
     slHit.on('pointerdown', ()=> { this.unlockAudioOnGesture(); this.selectedMap = MAPS.si; this.refreshMenuVisuals(); this.startGame(); });
     const backTag = this.add.text(-92, -56, '', { fontSize:'1px', color:'#000000' }).setOrigin(0.5);
     const locked2 = [];
@@ -553,6 +555,7 @@ class MainScene extends Phaser.Scene {
       this.touch.reverse = false; this.touch.reverseId = null;
       this.stopEngineSound();
       this.finished = false;
+      this.driveSpeed = 0;
       this.buildWorld(this.selectedMap);
       this.setState('playing');
     } finally { this.starting = false; }
@@ -570,6 +573,7 @@ class MainScene extends Phaser.Scene {
     this.pinch.active = false;
     this.pinch.ids = [];
     this.stopEngineSound();
+    this.driveSpeed = 0;
     if (this.car && this.car.body){
       this.car.body.setVelocity(0,0);
       this.car.body.setAngularVelocity(0);
@@ -596,6 +600,7 @@ class MainScene extends Phaser.Scene {
     this.best = Math.max(this.best, this.money);
     this.uiInfo.setText(`🏁 CÍL! Peníze: ${this.money} (best: ${this.best})`);
     this.playWinTune();
+    this.driveSpeed = 0;
     if (this.car && this.car.body){ this.car.body.setVelocity(0,0); this.car.body.setAngularVelocity(0); }
     this.touch.gas = false; this.touch.gasId = null;
     this.touch.reverse = false; this.touch.reverseId = null;
@@ -611,47 +616,38 @@ class MainScene extends Phaser.Scene {
     const reverse = this.touch.reverse || this.cursors.down.isDown;
     const kbSteer = (this.cursors.left.isDown ? -1 : 0) + (this.cursors.right.isDown ? 1 : 0);
     const steer = this.wheel.active || Math.abs(this.steer) > 0.001 ? this.steer : kbSteer;
-    const dt = delta / 1000;
-    const speed = this.car.body.speed || 0;
-    const signedForward = this.forwardSpeed();
+    const dt = Math.min(delta / 1000, 0.033);
     const driving = gas || reverse;
 
     if (driving){
       this.resumeCameraFollow();
     }
 
-    const turnRateDeg = driving ? 170 : 125;
-    if (driving){
-      const speedN = clamp(Math.abs(signedForward) / this.selectedCar.maxSpeed, 0, 1);
-      const yaw = steer * turnRateDeg * (0.35 + 0.65 * speedN) * dt * (reverse ? -1 : 1);
-      this.car.rotation += Phaser.Math.DegToRad(yaw);
-    } else if (this.wheel.active && Math.abs(steer) > 0.02){
-      const yaw = steer * turnRateDeg * 0.72 * dt;
-      this.car.rotation += Phaser.Math.DegToRad(yaw);
-      this.car.body.setVelocity(
-        Phaser.Math.Linear(this.car.body.velocity.x, 0, 0.22),
-        Phaser.Math.Linear(this.car.body.velocity.y, 0, 0.22)
-      );
-    } else if (!driving){
-      this.car.body.setVelocity(
-        Phaser.Math.Linear(this.car.body.velocity.x, 0, 0.10),
-        Phaser.Math.Linear(this.car.body.velocity.y, 0, 0.10)
-      );
+    const turnRateDeg = driving ? 230 : 175;
+    const spinRateDeg = 125;
+    if (Math.abs(steer) > 0.02){
+      const yawDeg = steer * (driving ? turnRateDeg : spinRateDeg) * dt * (reverse ? -1 : 1);
+      this.car.rotation += Phaser.Math.DegToRad(yawDeg);
     }
 
-    const headingDeg = (this.car.rotation * 180/Math.PI) - 90;
-    if (gas || reverse){
-      const target = new Phaser.Math.Vector2();
-      const targetSpeed = reverse ? -this.selectedCar.maxSpeed * 0.45 : this.selectedCar.maxSpeed;
-      this.physics.velocityFromAngle(headingDeg, targetSpeed, target);
-      const a = clamp((this.selectedCar.accel || 520) / 860, 0.08, 0.24);
-      this.car.body.velocity.x = Phaser.Math.Linear(this.car.body.velocity.x, target.x, a);
-      this.car.body.velocity.y = Phaser.Math.Linear(this.car.body.velocity.y, target.y, a);
-      this.startEngineSound();
+    const accel = this.selectedCar.accel || 520;
+    const brake = accel * 1.45;
+    if (gas){
+      this.driveSpeed = Math.min(this.selectedCar.maxSpeed, this.driveSpeed + accel * dt);
+    } else if (reverse){
+      this.driveSpeed = Math.max(-this.selectedCar.maxSpeed * 0.45, this.driveSpeed - accel * dt);
     } else {
-      this.stopEngineSound();
+      if (this.driveSpeed > 0) this.driveSpeed = Math.max(0, this.driveSpeed - brake * dt);
+      else if (this.driveSpeed < 0) this.driveSpeed = Math.min(0, this.driveSpeed + brake * dt);
     }
-    this.updateEngineSound(Math.abs(signedForward), gas || reverse);
+
+    const vx = Math.cos(this.car.rotation - Math.PI/2) * this.driveSpeed;
+    const vy = Math.sin(this.car.rotation - Math.PI/2) * this.driveSpeed;
+    this.car.body.setVelocity(vx, vy);
+
+    if (driving) this.startEngineSound();
+    else if (Math.abs(this.driveSpeed) < 1) this.stopEngineSound();
+    this.updateEngineSound(Math.abs(this.driveSpeed), driving);
   }
 
   forwardSpeed(){
@@ -677,13 +673,19 @@ class MainScene extends Phaser.Scene {
       const t = this.audioCtx.currentTime;
       const osc = this.audioCtx.createOscillator();
       const gain = this.audioCtx.createGain();
+      const buffer = this.audioCtx.createBuffer(1, 1, this.audioCtx.sampleRate);
+      const src = this.audioCtx.createBufferSource();
+      src.buffer = buffer;
       osc.type = 'sine';
       osc.frequency.value = 220;
       gain.gain.value = 0.00001;
       osc.connect(gain);
+      src.connect(gain);
       gain.connect(this.audioCtx.destination);
       osc.start(t);
+      src.start(t);
       osc.stop(t + 0.03);
+      src.stop(t + 0.001);
       this.audioUnlocked = true;
     } catch(e) {}
   }
@@ -701,7 +703,7 @@ class MainScene extends Phaser.Scene {
     const osc = this.audioCtx.createOscillator();
     const gain = this.audioCtx.createGain();
     const filter = this.audioCtx.createBiquadFilter();
-    osc.type = 'sawtooth';
+    osc.type = this.selectedCar?.id === 'motorka' ? 'square' : (this.selectedCar?.id === 'taxi' ? 'sawtooth' : 'triangle');
     filter.type = 'lowpass';
     filter.frequency.value = 480;
     osc.frequency.value = this.selectedCar?.engineBase || 90;
@@ -745,13 +747,13 @@ class MainScene extends Phaser.Scene {
     this.resumeAudio();
     const start = this.audioCtx.currentTime + 0.02;
     const melody = [
-      [523.25,0.00,0.40,'triangle',0.06],
-      [659.25,0.42,0.40,'triangle',0.06],
-      [783.99,0.84,0.52,'triangle',0.06],
-      [659.25,1.38,0.34,'square',0.045],
-      [783.99,1.74,0.34,'square',0.045],
-      [1046.5,2.10,0.72,'triangle',0.07],
-      [1318.5,2.88,0.95,'sine',0.08]
+      [523.25,0.00,0.24,'triangle',0.07],
+      [659.25,0.24,0.24,'triangle',0.07],
+      [783.99,0.48,0.30,'triangle',0.07],
+      [659.25,0.80,0.20,'square',0.05],
+      [783.99,1.02,0.20,'square',0.05],
+      [1046.5,1.24,0.42,'triangle',0.075],
+      [1318.5,1.70,0.56,'sine',0.085]
     ];
     melody.forEach(([freq,off,dur,wave,peak])=>{
       const osc = this.audioCtx.createOscillator();
@@ -767,7 +769,7 @@ class MainScene extends Phaser.Scene {
       gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
       osc.stop(t0 + dur + 0.04);
     });
-    const popTimes = [1.62,1.78,1.94,2.16,2.34,2.52,3.08,3.22,3.36,3.52];
+    const popTimes = [0.96,1.08,1.20,1.34,1.48,1.62,1.88,1.98,2.08,2.20];
     popTimes.forEach((off,i)=>{
       const buffer = this.audioCtx.createBuffer(1, Math.floor(this.audioCtx.sampleRate * 0.09), this.audioCtx.sampleRate);
       const data = buffer.getChannelData(0);
@@ -798,13 +800,13 @@ class MainScene extends Phaser.Scene {
       g.fillStyle(0x111111, 1).fillCircle(w * 0.35, h * 0.78, 8).fillCircle(w * 0.65, h * 0.78, 8);
       g.fillStyle(bodyColor, 1).fillRoundedRect(w * 0.36, h * 0.16, w * 0.28, h * 0.52, 10);
       g.fillStyle(stripeColor, 0.95).fillRect(w * 0.44, h * 0.22, w * 0.12, h * 0.24);
-      g.fillStyle(0x7fc8ff, 0.92).fillRoundedRect(w * 0.39, h * 0.52, w * 0.22, h * 0.10, 5);
+      g.fillStyle(0x7fc8ff, 0.92).fillRoundedRect(w * 0.39, h * 0.56, w * 0.22, h * 0.10, 5);
       g.lineStyle(4, 0x333333, 1).lineBetween(w * 0.28, h * 0.32, w * 0.72, h * 0.32).lineBetween(w * 0.36, h * 0.68, w * 0.64, h * 0.68);
       g.fillStyle(0xfff2a3, 0.95).fillCircle(w * 0.50, h * 0.18, 5);
     } else {
       g.fillStyle(0x111111, 1).fillCircle(w * 0.23, h * 0.2, 8).fillCircle(w * 0.77, h * 0.2, 8).fillCircle(w * 0.23, h * 0.8, 8).fillCircle(w * 0.77, h * 0.8, 8);
       g.fillStyle(bodyColor, 1).fillRoundedRect(w * 0.18, h * 0.08, w * 0.64, h * 0.84, 16);
-      g.fillStyle(0x7fc8ff, 0.92).fillRoundedRect(w * 0.28, h * 0.18, w * 0.44, h * 0.16, 8);
+      g.fillStyle(0x7fc8ff, 0.92).fillRoundedRect(w * 0.28, h * 0.54, w * 0.44, h * 0.16, 8);
       g.fillStyle(stripeColor, 0.95).fillRect(w * 0.43, h * 0.14, w * 0.14, h * 0.64);
       g.fillStyle(0xff3333, 0.9).fillRect(w * 0.25, h * 0.76, 8, 8).fillRect(w * 0.67, h * 0.76, 8, 8);
     }
@@ -847,8 +849,6 @@ class MainScene extends Phaser.Scene {
     poly([[156,62],[188,54],[220,64],[234,82],[226,104],[198,106],[176,94],[162,82]], 0x73c76f);
     poly([[110,28],[126,18],[150,18],[160,34],[150,44],[128,42]], 0x79cf72);
     poly([[142,138],[156,136],[166,146],[164,160],[150,162],[142,152]], 0x69bf63);
-    g.fillStyle(0xffe069, 0.28); g.lineStyle(2, 0xfff18c, 1);
-    g.beginPath(); g.moveTo(150,106); g.lineTo(156,101); g.lineTo(164,99); g.lineTo(172,101); g.lineTo(179,104); g.lineTo(184,108); g.lineTo(182,113); g.lineTo(174,116); g.lineTo(166,116); g.lineTo(159,119); g.lineTo(152,117); g.lineTo(148,112); g.closePath(); g.fillPath(); g.strokePath();
     g.generateTexture(key, w, h); g.destroy();
   }
 
